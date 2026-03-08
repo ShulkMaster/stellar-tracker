@@ -60,4 +60,21 @@ export class BinaryReader {
     this._offset += 8;
     return value;
   }
+
+  public readUint16(): number {
+    const value = this._view.getUint16(this._offset, true);
+    this._offset += 2;
+    return value;
+  }
+
+  public readString(): string {
+    const length = this.readInt32();
+    if (length === 0) return '';
+
+    if (length < 0) {
+      throw new Error(`Negative string length: ${length}`);
+    }
+
+    return this.readASCII(length);
+  }
 }
