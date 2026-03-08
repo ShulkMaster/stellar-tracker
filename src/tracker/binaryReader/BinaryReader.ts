@@ -1,3 +1,5 @@
+type ReadStream = ReadableStream<Uint8Array<ArrayBuffer>>;
+
 export class BinaryReader {
   private readonly _buffer: Uint8Array;
   private readonly _view: DataView;
@@ -10,25 +12,18 @@ export class BinaryReader {
     this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   }
 
-  public static async fromStream(stream: ReadableStream<Uint8Array<ArrayBuffer>>): Promise<BinaryReader> {
+  public static async fromStream(totalSize: number, stream: ReadStream): Promise<BinaryReader> {
     const reader = stream.getReader();
-    const chunks: Uint8Array[] = [];
-    let totalLength = 0;
+    const combined = new Uint8Array(totalSize);
+    let offset = 0;
 
-    while (true) {
+    while (offset < totalSize) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value) {
-        chunks.push(value);
-        totalLength += value.length;
+        combined.set(value, offset);
+        offset += value.length;
       }
-    }
-
-    const combined = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
     }
 
     return new BinaryReader(combined);
@@ -43,17 +38,13 @@ export class BinaryReader {
   }
 
   public readASCII(bytes: number): string {
-    const value = this._ascii.decode(
-      this._buffer.subarray(this._offset, this._offset + bytes),
-    );
+    const value = this._ascii.decode(this._buffer.subarray(this._offset, this._offset + bytes));
     this._offset += bytes;
     return value;
   }
 
   public readUTF8(bytes: number): string {
-    const value = this._utf8.decode(
-      this._buffer.subarray(this._offset, this._offset + bytes),
-    );
+    const value = this._utf8.decode(this._buffer.subarray(this._offset, this._offset + bytes));
     this._offset += bytes;
     return value;
   }
