@@ -1,6 +1,8 @@
 export class BinaryReader {
   private readonly _buffer: Uint8Array;
   private readonly _view: DataView;
+  private readonly _ascii = new TextDecoder('ascii');
+  private readonly _utf8 = new TextDecoder('utf8');
   private _offset: number = 0;
 
   constructor(buffer: Uint8Array) {
@@ -41,7 +43,7 @@ export class BinaryReader {
   }
 
   public readASCII(bytes: number): string {
-    const value = new TextDecoder('ascii').decode(
+    const value = this._ascii.decode(
       this._buffer.subarray(this._offset, this._offset + bytes),
     );
     this._offset += bytes;
@@ -49,7 +51,7 @@ export class BinaryReader {
   }
 
   public readUTF8(bytes: number): string {
-    const value = new TextDecoder('utf-8').decode(
+    const value = this._utf8.decode(
       this._buffer.subarray(this._offset, this._offset + bytes),
     );
     this._offset += bytes;
