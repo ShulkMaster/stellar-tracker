@@ -1,3 +1,8 @@
+export type CustomVersion = {
+  guid: string;
+  version: number;
+}
+
 export type SaveHeader = {
   stelarHeader: string;
   stelarVersion: number;
@@ -9,7 +14,10 @@ export type SaveHeader = {
   patchVersion: number;
   changelistVersion: number;
   engineBranch: string;
-  versionCount: number;
+  customVersionFormat: number;
+  customVersionCount: number;
+  customVersions: CustomVersion[];
+  saveClassName: string;
 }
 
 export type StelarSaveFile = {

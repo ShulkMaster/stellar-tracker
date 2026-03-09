@@ -61,6 +61,12 @@ export class BinaryReader {
     return value;
   }
 
+  public readUint32(): number {
+    const value = this._view.getUint32(this._offset, true);
+    this._offset += 4;
+    return value;
+  }
+
   public readUint16(): number {
     const value = this._view.getUint16(this._offset, true);
     this._offset += 2;
@@ -75,6 +81,28 @@ export class BinaryReader {
       throw new Error(`Negative string length: ${length}`);
     }
 
-    return this.readASCII(length);
+    // avoid reading the null termination
+    const text = this.readASCII(length  - 1);
+    // adds one to account for the null termination
+    this._offset++;
+
+    return text;
+  }
+
+  public readGUID(): string {
+    const a = this.readUint32();
+    const b = this.readUint32();
+    const c = this.readUint32();
+    const d = this.readUint32();
+    return (
+      a.toString(16).padStart(8, '0') +
+      b.toString(16).padStart(8, '0') +
+      c.toString(16).padStart(8, '0') +
+      d.toString(16).padStart(8, '0')
+    ).toUpperCase();
+  }
+
+  public seek(offset: number): void {
+    this._offset = offset;
   }
 }

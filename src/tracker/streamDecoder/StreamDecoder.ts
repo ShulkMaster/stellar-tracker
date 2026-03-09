@@ -20,7 +20,18 @@ export class StreamDecoder {
     const patchVersion = this._reader.readUint16();
     const changelistVersion = this._reader.readInt32();
     const engineBranch = this._reader.readString();
-    const versionCount = this._reader.readInt32();
+    const customVersionFormat = this._reader.readInt32();
+    const customVersionCount = this._reader.readInt32();
+
+    const customVersions = [];
+    for (let i = 0; i < customVersionCount; i++) {
+      customVersions.push({
+        guid: this._reader.readGUID(),
+        version: this._reader.readInt32(),
+      });
+    }
+
+    const saveClassName = this._reader.readString();
 
     return {
       stelarHeader,
@@ -33,7 +44,10 @@ export class StreamDecoder {
       patchVersion,
       changelistVersion,
       engineBranch,
-      versionCount,
+      customVersionFormat,
+      customVersionCount,
+      customVersions,
+      saveClassName,
     }
   }
 }
