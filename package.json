@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "assert": "npx tsx assert.ts"
   },
   "dependencies": {
     "lit": "^3.3.1"

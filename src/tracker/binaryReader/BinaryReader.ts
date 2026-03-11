@@ -2,7 +2,7 @@ type ReadStream = ReadableStream<Uint8Array<ArrayBuffer>>;
 
 export class BinaryReader {
   private readonly _buffer: Uint8Array;
-  private readonly _view: DataView;
+  public readonly _view: DataView;
   private readonly _ascii = new TextDecoder('ascii');
   private readonly _utf8 = new TextDecoder('utf8');
   private _offset: number = 0;
@@ -35,6 +35,10 @@ export class BinaryReader {
 
   public get position(): number {
     return this._offset;
+  }
+
+  public readByte(): number {
+    return this._view.getUint8(this._offset);
   }
 
   public readASCII(bytes: number): string {
