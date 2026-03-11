@@ -21,8 +21,11 @@ export type SaveHeader = {
 }
 
 export const enum ProType {
+  None = 'None',
   Int64Property = 'Int64Property',
   MapProperty = 'MapProperty',
+  NameProperty = 'NameProperty',
+  StructProperty = 'StructProperty',
 }
 
 export type PropertyParseContext = {
@@ -45,7 +48,19 @@ export type MapProp = {
   value: Record<string, PropertyTag>
 }
 
-export type PropertyTag =  Int64Prop | MapProp;
+export type NameProp = {
+  name: string;
+  type: ProType.NameProperty;
+  value: string;
+}
+
+export type StructProp = {
+  name: string;
+  type: ProType.StructProperty;
+  value: any;
+}
+
+export type PropertyTag = Int64Prop | MapProp | NameProp | StructProp;
 
 export type SaveBody = {
   [key: string]: PropertyTag;

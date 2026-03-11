@@ -3,13 +3,7 @@ import { ProType } from 'types/safeFile';
 import { BinaryReader } from '../binaryReader/BinaryReader';
 
 function hasGuid(prop: string): boolean {
-  switch (prop) {
-    case ProType.Int64Property:
-      return true;
-      // other cases coming up
-  }
-
-  return false;
+  return prop !== ProType.None;
 }
 
 export class StreamDecoder {
@@ -70,6 +64,13 @@ export class StreamDecoder {
 
   public decodeProperty(): P.PropertyTag {
     const propName = this._reader.readString();
+    if (propName === ProType.None) {
+      return {
+        name: propName,
+        type: ProType.None,
+        value: undefined,
+      } as any;
+    }
     const propType = this._reader.readString();
 
     const byteSize = this._reader.readInt32();
@@ -79,8 +80,7 @@ export class StreamDecoder {
     if (hasGuid(propType)) {
       const hasTag = this._reader.readByte();
       if (hasTag) {
-        // guidTag =
-        throw Error('Not implemented GUID parsing');
+        guidTag = this._reader.readGUID();
       }
     }
 
@@ -101,6 +101,15 @@ export class StreamDecoder {
       case ProType.MapProperty: {
         return this.asMapProp(context);
       }
+      case ProType.NameProperty: {
+        return this.asNameProp(context, this._reader.readString());
+      }
+      case ProType.StructProperty: {
+        return this.asStructProp(context);
+      }
+      case 'Name': {
+        return this.asNameProp(context, this._reader.readString());
+      }
     }
 
     throw new Error(`Unsupported type: ${context.propType}`);
@@ -114,14 +123,85 @@ export class StreamDecoder {
     };
   }
 
+  private asNameProp(context: P.PropertyParseContext, value: string): P.NameProp {
+    return {
+      name: context.propName,
+      type: ProType.NameProperty,
+      value,
+    };
+  }
+
+  private asStructProp(context: P.PropertyParseContext): P.StructProp {
+    const structType = this._reader.readString();
+    const guid = this._reader.readGUID();
+    const hasTag = this._reader.readByte();
+    if (hasTag) {
+      this._reader.readGUID();
+    }
+
+    const value: Record<string, P.PropertyTag> = {};
+    if (structType === 'DateTime' || structType === 'Timespan') {
+       return {
+         name: context.propName,
+         type: ProType.StructProperty,
+         value: this._reader.readInt64(),
+       }
+    }
+
+    while (true) {
+      const prop = this.decodeProperty();
+      if (prop.name === ProType.None) break;
+      value[prop.name] = prop;
+    }
+
+    return {
+      name: context.propName,
+      type: ProType.StructProperty,
+      value,
+    };
+  }
+
   private asMapProp(context: P.PropertyParseContext): P.MapProp {
-    const keyPropName = this._reader.readString();
     const keyPropType = this._reader.readString();
+    const valuePropType = this._reader.readString();
+
+    const hasGuid = this._reader.readByte();
+    if (hasGuid) {
+      this._reader.readGUID();
+    }
+
+    this._reader.readInt32(); // 4 null bytes?
+    const count = this._reader.readInt32();
+    const value: Record<string, P.PropertyTag> = {};
+
+    for (let i = 0; i < count; i++) {
+      const key = this.decodeValue(keyPropType, 'Key');
+      const val = this.decodeValue(valuePropType, 'Value');
+
+      if (typeof key === 'string') {
+        value[key] = val;
+      } else {
+        value[`key_${i}`] = val;
+      }
+    }
 
     return {
       name: context.propName,
       type: ProType.MapProperty,
-      value: {},
+      value,
     };
+  }
+
+  private decodeValue(type: string, name: string): any {
+    const context: P.PropertyParseContext = {
+      propName: name,
+      propType: type,
+      byteSize: 0,
+      arrayIndex: 0,
+      guidTag: undefined,
+    };
+
+    const prop = this.castValue(context);
+    return prop.value;
   }
 }

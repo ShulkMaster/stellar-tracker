@@ -37,8 +37,18 @@ export class BinaryReader {
     return this._offset;
   }
 
+  public seek(offset: number): void {
+    this._offset = offset;
+  }
+
+  public readSlice(start: number, end: number): ArrayBufferLike {
+    return this._view.buffer.slice(start, end);
+  }
+
   public readByte(): number {
-    return this._view.getUint8(this._offset);
+    const value = this._view.getUint8(this._offset);
+    this._offset++;
+    return value;
   }
 
   public readASCII(bytes: number): string {
@@ -104,9 +114,5 @@ export class BinaryReader {
       c.toString(16).padStart(8, '0') +
       d.toString(16).padStart(8, '0')
     ).toUpperCase();
-  }
-
-  public seek(offset: number): void {
-    this._offset = offset;
   }
 }

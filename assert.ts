@@ -34,16 +34,13 @@ async function run() {
 
   const date = unrealTicksToDate(dateProp.value);
 
-  console.log(date.toLocaleDateString());
-
+  console.log(date.toLocaleTimeString());
   console.log(dateProp);
-
-  reader.seek(reader.position + 1);
-  const slice = reader._view.buffer.slice(reader.position, reader.position + 64);
-  console.log(hex(slice));
 
 
   const map = decoder.decodeProperty();
+  console.log(map);
+  console.log('Next hex:', hex(reader.readSlice(reader.position, reader.position + 32)));
 }
 
 run().catch((err) => {
