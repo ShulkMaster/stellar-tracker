@@ -2,8 +2,11 @@ import type * as P from 'types/safeFile';
 import { ProType } from 'types/safeFile';
 import { BinaryReader } from '../binaryReader/BinaryReader';
 
-function hasGuid(prop: string): boolean {
-  return prop !== ProType.None;
+function hex(buffer: ArrayBufferLike): string {
+  const bytes = new Uint8Array(buffer);
+  return [...bytes]
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join(" ");
 }
 
 export class StreamDecoder {
@@ -13,7 +16,6 @@ export class StreamDecoder {
     propType: '',
     byteSize: 0,
     arrayIndex: 0,
-    guidTag: undefined,
   };
 
   constructor(reader: BinaryReader) {
@@ -64,6 +66,7 @@ export class StreamDecoder {
 
   public decodeProperty(): P.PropertyTag {
     const propName = this._reader.readString();
+
     if (propName === ProType.None) {
       return {
         name: propName,
@@ -71,24 +74,15 @@ export class StreamDecoder {
         value: undefined,
       } as any;
     }
-    const propType = this._reader.readString();
 
+    const propType = this._reader.readString();
     const byteSize = this._reader.readInt32();
     const arrayIndex = this._reader.readInt32();
-    let guidTag: string | undefined = undefined;
-
-    if (hasGuid(propType)) {
-      const hasTag = this._reader.readByte();
-      if (hasTag) {
-        guidTag = this._reader.readGUID();
-      }
-    }
 
     this._ctx.propName = propName;
     this._ctx.propType = propType;
     this._ctx.byteSize = byteSize;
     this._ctx.arrayIndex = arrayIndex;
-    this._ctx.guidTag = guidTag;
 
     return this.castValue(this._ctx);
   }
@@ -96,7 +90,7 @@ export class StreamDecoder {
   private castValue(context: P.PropertyParseContext): P.PropertyTag {
     switch (context.propType) {
       case ProType.Int64Property: {
-        return this.asInt64Prop(context, this._reader.readInt64());
+        return this.asInt64Prop(context);
       }
       case ProType.MapProperty: {
         return this.asMapProp(context);
@@ -115,10 +109,20 @@ export class StreamDecoder {
     throw new Error(`Unsupported type: ${context.propType}`);
   }
 
-  private asInt64Prop(context: P.PropertyParseContext, value: bigint): P.Int64Prop {
+  private asInt64Prop(context: P.PropertyParseContext): P.Int64Prop {
+    const hasTag = this._reader.readByte();
+    let guid: string | undefined = undefined;
+
+    if (hasTag) {
+      guid = this._reader.readGUID();
+    }
+
+    const value = this._reader.readInt64();
+
     return {
       name: context.propName,
       type: ProType.Int64Property,
+      guid,
       value,
     };
   }

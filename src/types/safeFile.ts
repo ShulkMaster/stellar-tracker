@@ -33,18 +33,19 @@ export type PropertyParseContext = {
   propType: string;
   byteSize: number;
   arrayIndex: number;
-  guidTag: string | undefined;
 }
 
 export type Int64Prop = {
   name: string;
   type: ProType.Int64Property;
+  guid: string | undefined;
   value: bigint;
 }
 
 export type MapProp = {
   name: string
   type: ProType.MapProperty;
+  entries: number;
   value: Record<string, PropertyTag>
 }
 

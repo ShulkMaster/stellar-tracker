@@ -34,7 +34,7 @@ async function run() {
 
   const date = unrealTicksToDate(dateProp.value);
 
-  console.log(date.toLocaleTimeString());
+  console.log(date.toLocaleString());
   console.log(dateProp);
 
 
