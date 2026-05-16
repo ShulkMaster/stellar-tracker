@@ -1,4 +1,5 @@
 import type { DataRow } from 'types/table';
+import { toHex } from '../decoder/decoder.ts';
 
 type ReadStream = ReadableStream<Uint8Array<ArrayBuffer>>;
 
@@ -169,13 +170,12 @@ export class BinaryReader {
 
     const { offset, length } = view;
     const bytes = this._buffer.subarray(offset, offset + length);
-    const ascii = this._ascii.decode(bytes);
 
     this._log.push({
       type,
       value,
       byteRange: `${offset}-${offset + length}`,
-      byteData: ascii,
+      byteData: toHex(bytes),
     });
   }
 }

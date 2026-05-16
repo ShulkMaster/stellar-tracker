@@ -1,12 +1,11 @@
 import type * as P from 'types/safeFile';
 import { ProType } from 'types/safeFile';
 import { BinaryReader } from '../binaryReader/BinaryReader';
+import { toHex } from '../decoder/decoder';
 
 function hex(buffer: ArrayBufferLike): string {
   const bytes = new Uint8Array(buffer);
-  return [...bytes]
-      .map(b => b.toString(16).padStart(2, "0"))
-      .join(" ");
+  return toHex(bytes);
 }
 
 export class StreamDecoder {
@@ -137,7 +136,7 @@ export class StreamDecoder {
 
   private asStructProp(context: P.PropertyParseContext): P.StructProp {
     const structType = this._reader.readString();
-    const guid = this._reader.readGUID();
+    this._reader.readGUID();
     const hasTag = this._reader.readByte();
     if (hasTag) {
       this._reader.readGUID();
@@ -168,17 +167,14 @@ export class StreamDecoder {
   private asMapProp(context: P.PropertyParseContext): P.MapProp {
     const keyPropType = this._reader.readString();
     const valuePropType = this._reader.readString();
+    // todo: skipping unknow 5 bytes
+    console.log(hex(this._reader.readSlice(this._reader.position, this._reader.position + 16)));
+    this._reader.seek(this._reader.position + 5);
+    const entries = this._reader.readInt32();
 
-    const hasGuid = this._reader.readByte();
-    if (hasGuid) {
-      this._reader.readGUID();
-    }
-
-    this._reader.readInt32(); // 4 null bytes?
-    const count = this._reader.readInt32();
     const value: Record<string, P.PropertyTag> = {};
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < entries; i++) {
       const key = this.decodeValue(keyPropType, 'Key');
       const val = this.decodeValue(valuePropType, 'Value');
 
@@ -192,6 +188,7 @@ export class StreamDecoder {
     return {
       name: context.propName,
       type: ProType.MapProperty,
+      entries,
       value,
     };
   }
@@ -202,7 +199,6 @@ export class StreamDecoder {
       propType: type,
       byteSize: 0,
       arrayIndex: 0,
-      guidTag: undefined,
     };
 
     const prop = this.castValue(context);
