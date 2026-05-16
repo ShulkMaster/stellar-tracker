@@ -9,8 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "vitest run",
-    "assert": "npx tsx assert.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@popperjs/core": "^2.11.8",
