@@ -134,4 +134,18 @@ describe('BinaryReader', () => {
     expect(log[4].type).toBe('GUID');
     expect(log[4].value).toBe('000000AA000000BB000000CC000000DD');
   });
+
+  it('should throw if reading more than 60 bytes', () => {
+    const buffer = new Uint8Array(100);
+    const reader = new BinaryReader(buffer);
+
+    expect(() => reader.readASCII(61)).toThrow('Read length exceeded safety limit');
+  });
+
+  it('should throw if readString length exceeds limit', () => {
+    const buffer = new Uint8Array([0x40, 0x00, 0x00, 0x00]); // 64
+    const reader = new BinaryReader(buffer);
+
+    expect(() => reader.readString()).toThrow('Read length exceeded safety limit');
+  });
 });

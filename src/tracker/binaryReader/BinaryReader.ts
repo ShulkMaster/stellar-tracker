@@ -56,8 +56,12 @@ export class BinaryReader {
   }
 
   public readSlice(start: number, end: number): ArrayBufferLike {
+    const length = end - start;
+    if (length > 60) {
+      throw new Error(`Read length exceeded safety limit: ${length} bytes (max 60)`);
+    }
     const value = this._view.buffer.slice(start, end);
-    this.addToLog('Slice', value, { offset: start, length: end - start });
+    this.addToLog('Slice', value, { offset: start, length });
     return value;
   }
 
@@ -70,6 +74,9 @@ export class BinaryReader {
   }
 
   public readASCII(bytes: number): string {
+    if (bytes > 60) {
+      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 60)`);
+    }
     const start = this._offset;
     const value = this._ascii.decode(this._buffer.subarray(this._offset, this._offset + bytes));
     this._offset += bytes;
@@ -78,6 +85,9 @@ export class BinaryReader {
   }
 
   public readUTF8(bytes: number): string {
+    if (bytes > 60) {
+      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 60)`);
+    }
     const start = this._offset;
     const value = this._utf8.decode(this._buffer.subarray(this._offset, this._offset + bytes));
     this._offset += bytes;
@@ -160,7 +170,6 @@ export class BinaryReader {
     const { offset, length } = view;
     const bytes = this._buffer.subarray(offset, offset + length);
     const ascii = this._ascii.decode(bytes);
-
 
     this._log.push({
       type,
