@@ -13,18 +13,23 @@
     "assert": "npx tsx assert.ts"
   },
   "dependencies": {
-    "lit": "^3.3.1"
+    "@popperjs/core": "^2.11.8",
+    "bootstrap": "^5.3.8",
+    "svelte": "^5.55.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^25.3.5",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-lit": "^2.2.1",
+    "eslint-plugin-svelte": "^3.17.1",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",
+    "svelte-check": "^4.4.8",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.0-beta.13",
