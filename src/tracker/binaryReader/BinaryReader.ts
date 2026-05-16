@@ -13,6 +13,7 @@ export class BinaryReader {
   public readonly _view: DataView;
   private readonly _ascii = new TextDecoder('ascii');
   private readonly _utf8 = new TextDecoder('utf8');
+  private readonly _utf16 = new TextDecoder('utf-16le');
   private readonly _loggingEnabled: boolean;
   private readonly _log: DataRow[] = [];
   private _offset: number = 0;
@@ -58,8 +59,8 @@ export class BinaryReader {
 
   public readSlice(start: number, end: number): ArrayBufferLike {
     const length = end - start;
-    if (length > 60) {
-      throw new Error(`Read length exceeded safety limit: ${length} bytes (max 60)`);
+    if (length > 1024) {
+      throw new Error(`Read length exceeded safety limit: ${length} bytes (max 1024)`);
     }
     const value = this._view.buffer.slice(start, end);
     this.addToLog('Slice', value, { offset: start, length });
@@ -75,8 +76,8 @@ export class BinaryReader {
   }
 
   public readASCII(bytes: number): string {
-    if (bytes > 60) {
-      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 60)`);
+    if (bytes > 1024) {
+      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 1024)`);
     }
     const start = this._offset;
     const value = this._ascii.decode(this._buffer.subarray(this._offset, this._offset + bytes));
@@ -86,8 +87,8 @@ export class BinaryReader {
   }
 
   public readUTF8(bytes: number): string {
-    if (bytes > 60) {
-      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 60)`);
+    if (bytes > 1024) {
+      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 1024)`);
     }
     const start = this._offset;
     const value = this._utf8.decode(this._buffer.subarray(this._offset, this._offset + bytes));
@@ -128,20 +129,66 @@ export class BinaryReader {
     return value;
   }
 
+  public readInt16(): number {
+    const start = this._offset;
+    const value = this._view.getInt16(this._offset, true);
+    this._offset += 2;
+    this.addToLog('Int16', value, { offset: start, length: 2 });
+    return value;
+  }
+
+  public readInt8(): number {
+    const start = this._offset;
+    const value = this._view.getInt8(this._offset);
+    this._offset += 1;
+    this.addToLog('Int8', value, { offset: start, length: 1 });
+    return value;
+  }
+
+  public readFloat32(): number {
+    const start = this._offset;
+    const value = this._view.getFloat32(this._offset, true);
+    this._offset += 4;
+    this.addToLog('Float32', value, { offset: start, length: 4 });
+    return value;
+  }
+
+  public readFloat64(): number {
+    const start = this._offset;
+    const value = this._view.getFloat64(this._offset, true);
+    this._offset += 8;
+    this.addToLog('Float64', value, { offset: start, length: 8 });
+    return value;
+  }
+
   public readString(): string {
     const start = this._offset;
     const length = this.readInt32();
+
     if (length === 0) {
-      this.addToLog('String', '', { offset: start, length: this._offset - start });
+      this.addToLog('String', '', { offset: start, length: 4 });
       return '';
     }
 
     if (length < 0) {
-      throw new Error(`Negative string length: ${length}`);
+      const charCount = -length;
+      const byteCount = charCount * 2;
+      if (byteCount > 1024) {
+        throw new Error(`Read length exceeded safety limit: ${byteCount} bytes (max 1024) at ${start}`);
+      }
+      // Decode UTF-16 and skip the 2-byte null terminator
+      const text = this._utf16.decode(this._buffer.subarray(this._offset, this._offset + byteCount - 2));
+      this._offset += byteCount;
+      this.addToLog('String (UTF16)', text, { offset: start, length: this._offset - start });
+      return text;
+    }
+
+    if (length > 1024) {
+      throw new Error(`Read length exceeded safety limit: ${length} bytes (max 1024) at ${start}`);
     }
 
     // avoid reading the null termination
-    const text = this.readASCII(length  - 1);
+    const text = this.readASCII(length - 1);
     // adds one to account for the null termination
     this._offset++;
 

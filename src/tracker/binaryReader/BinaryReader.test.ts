@@ -135,17 +135,31 @@ describe('BinaryReader', () => {
     expect(log[4].value).toBe('000000AA000000BB000000CC000000DD');
   });
 
-  it('should throw if reading more than 60 bytes', () => {
-    const buffer = new Uint8Array(100);
+  it('should throw if reading more than 1024 bytes', () => {
+    const buffer = new Uint8Array(2000);
     const reader = new BinaryReader(buffer);
 
-    expect(() => reader.readASCII(61)).toThrow('Read length exceeded safety limit');
+    expect(() => reader.readASCII(1025)).toThrow('Read length exceeded safety limit');
   });
 
   it('should throw if readString length exceeds limit', () => {
-    const buffer = new Uint8Array([0x40, 0x00, 0x00, 0x00]); // 64
+    const buffer = new Uint8Array([0x01, 0x04, 0x00, 0x00]); // 1025
     const reader = new BinaryReader(buffer);
 
     expect(() => reader.readString()).toThrow('Read length exceeded safety limit');
+  });
+
+  it('should read UTF-16 string with negative length', () => {
+    // Length -4 (0xfcffffff) -> 4 characters, 8 bytes. "A\0B\0C\0\0\0"
+    const buffer = new Uint8Array([
+      0xfc, 0xff, 0xff, 0xff, // Length -4
+      0x41, 0x00,             // 'A'
+      0x42, 0x00,             // 'B'
+      0x43, 0x00,             // 'C'
+      0x00, 0x00              // Null terminator
+    ]);
+    const reader = new BinaryReader(buffer);
+    expect(reader.readString()).toBe('ABC');
+    expect(reader.position).toBe(12);
   });
 });

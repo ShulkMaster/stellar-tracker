@@ -41,7 +41,7 @@
         decoder.decodeHeader();
       } else {
         const prop = decoder.decodeProperty();
-        if (prop.name === ProType.None) {
+        if (prop.name === ProType.None && reader.position >= reader.size) {
           isEOF = true;
         }
       }
