@@ -1,10 +1,10 @@
 <script lang="ts">
   import { ProType } from '../types/safeFile';
 
-  let { assembler } = $props<{ assembler: any }>();
+  let { saveFile } = $props<{ saveFile: any }>();
 
-  let newGameCreateTime = $derived(assembler?.root?.['NewGameCreateTime']?.value);
-  let actors = $derived(assembler?.root?.['DataMap_SBActor']?.value || {});
+  let newGameCreateTime = $derived(saveFile?.body?.['NewGameCreateTime']?.value);
+  let actors = $derived(saveFile?.body?.['DataMap_SBActor']?.value || {});
 
   function formatFileTime(fileTime: bigint) {
     if (!fileTime) return 'N/A';

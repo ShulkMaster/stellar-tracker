@@ -1,5 +1,6 @@
 <script lang="ts">
   import DataTable from './components/DataTable.svelte';
+  import TrackerView from './components/TrackerView.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
   import { BinaryReader } from './tracker/binaryReader/BinaryReader';
   import { StreamDecoder } from './tracker/streamDecoder/StreamDecoder';
@@ -50,21 +51,21 @@
     </div>
   </div>
 
+  {#if jsonData.header}
+    <div class="row mb-4">
+      <div class="col-12">
+        <TrackerView saveFile={jsonData} />
+      </div>
+    </div>
+  {/if}
+
   <div class="row g-4">
     <div class="col-12">
       <div class="d-flex justify-content-between align-items-end mb-3">
-        <h3 class="mb-0">Binary Log</h3>
-        <span class="badge bg-info">{tableRows.length} entries</span>
-      </div>
-      <DataTable rows={tableRows} />
-    </div>
-    
-    <div class="col-12">
-      <div class="d-flex justify-content-between align-items-end mb-3">
         <h3 class="mb-0">Assembled JSON</h3>
-        <button 
-          class="btn btn-sm btn-outline-secondary" 
-          onclick={() => {
+        <button
+                class="btn btn-sm btn-outline-secondary"
+                onclick={() => {
             const json = JSON.stringify(jsonData, (_key, value) => typeof value === 'bigint' ? value.toString() : value, 2);
             navigator.clipboard.writeText(json);
           }}
@@ -77,6 +78,13 @@
           <code>{JSON.stringify(jsonData, (_key, value) => typeof value === 'bigint' ? value.toString() : value, 2)}</code>
         </pre>
       </div>
+    </div>
+    <div class="col-12">
+      <div class="d-flex justify-content-between align-items-end mb-3">
+        <h3 class="mb-0">Binary Log</h3>
+        <span class="badge bg-info">{tableRows.length} entries</span>
+      </div>
+      <DataTable rows={tableRows} />
     </div>
   </div>
 </div>

@@ -4,18 +4,30 @@ import { BinaryReader } from '../binaryReader/BinaryReader';
 
 export class StreamDecoder {
   private readonly _reader: BinaryReader;
-  private readonly _ctx: P.PropertyParseContext = {
-    propName: '',
-    propType: '',
-    byteSize: 0,
-    arrayIndex: 0,
-  };
 
   constructor(reader: BinaryReader) {
     this._reader = reader;
   }
 
-  decode(): P.SaveHeader {
+  public decode(): P.StelarSaveFile {
+    const header = this.decodeHeader();
+    const body: P.SaveBody = {};
+
+    try {
+
+    while (this._reader.position < this._reader.size) {
+      const prop = this.decodeProperty();
+      if (prop.name === ProType.None) break;
+      body[prop.name] = prop;
+    }
+    } catch (e) {
+      console.error(e);
+    }
+
+    return { header, body };
+  }
+
+  private decodeHeader(): P.SaveHeader {
     const stelarHeader = this._reader.readASCII(4);
     const stelarVersion = this._reader.readInt32();
     const unrealHeader = this._reader.readASCII(4);
@@ -77,12 +89,14 @@ export class StreamDecoder {
       console.log(`[Parser] Top-Level Prop: ${propName} (${propType}) at ${startPos}, size: ${byteSize}`);
     }
 
-    this._ctx.propName = propName;
-    this._ctx.propType = propType;
-    this._ctx.byteSize = byteSize;
-    this._ctx.arrayIndex = arrayIndex;
+    const ctx: P.PropertyParseContext = {
+      propName,
+      propType,
+      byteSize,
+      arrayIndex,
+    };
 
-    return this.castValue(this._ctx);
+    return this.castValue(ctx);
   }
 
   private castValue(context: P.PropertyParseContext, isCollectionItem: boolean = false): P.PropertyTag {
