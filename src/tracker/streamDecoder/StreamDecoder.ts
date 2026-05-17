@@ -15,7 +15,7 @@ export class StreamDecoder {
     this._reader = reader;
   }
 
-  decodeHeader(): P.SaveHeader {
+  decode(): P.SaveHeader {
     const stelarHeader = this._reader.readASCII(4);
     const stelarVersion = this._reader.readInt32();
     const unrealHeader = this._reader.readASCII(4);
@@ -57,7 +57,7 @@ export class StreamDecoder {
     }
   }
 
-  public decodeProperty(depth: number = 0): P.PropertyTag {
+  private decodeProperty(depth: number = 0): P.PropertyTag {
     const startPos = this._reader.position;
     const propName = this._reader.readString();
 

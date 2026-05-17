@@ -10,7 +10,7 @@ describe('StreamDecoder', () => {
     const buffer = await readFile(filePath);
     const reader = new BinaryReader(new Uint8Array(buffer));
     const decoder = new StreamDecoder(reader);
-    const header = decoder.decodeHeader();
+    const header = decoder.decode();
 
     expect(header).toMatchObject({
       stelarHeader: 'EVAS',

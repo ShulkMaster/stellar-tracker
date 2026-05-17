@@ -8,7 +8,6 @@
   let jsonData = $state<any>({});
   let tableRows = $state<DataRow[]>([]);
   let isLoading = $state(false);
-  let isEOF = $state(false);
 
   async function loadFile() {
     isLoading = true;
@@ -16,16 +15,11 @@
       const response = await fetch('/SBS00.sav');
       if (!response.ok) throw new Error(`Failed to load file: ${response.statusText}`);
       const buffer = await response.bytes();
-
       const reader = new BinaryReader(buffer, true);
       const decoder = new StreamDecoder(reader);
 
-      const header = decoder.decodeHeader();
-
+      jsonData = decoder.decode();
       tableRows = [...reader.log];
-      jsonData = header;
-      tableRows = [...reader.log];
-      isEOF = false;
     } catch (e: any) {
       console.error(e);
       alert(e.message);
@@ -49,7 +43,7 @@
         onReset={() => {}}
         canStep={false}
         {isLoading}
-        {isEOF}
+        isEOF={false}
         position={0}
         totalSize={0}
       />
