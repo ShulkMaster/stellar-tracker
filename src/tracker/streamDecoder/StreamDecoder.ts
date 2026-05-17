@@ -147,9 +147,19 @@ export class StreamDecoder {
       case 'Name': {
         return this.asNameProp(context, this._reader.readString());
       }
+      default: {
+        if (!isCollectionItem && context.byteSize > 0) {
+          this._reader.readByte(); // separator
+          this._reader.seek(this._reader.position + context.byteSize);
+          return {
+            name: context.propName,
+            type: context.propType as any,
+            value: `Blob(${context.byteSize})`,
+          };
+        }
+        throw new Error(`Unsupported type: ${context.propType} at ${this._reader.position}`);
+      }
     }
-
-    throw new Error(`Unsupported type: ${context.propType}`);
   }
 
   private asInt64Prop(context: P.PropertyParseContext, isCollectionItem: boolean): P.Int64Prop {
@@ -333,6 +343,7 @@ export class StreamDecoder {
         this._reader.readGUID();
       }
     }
+    console.log(`[Struct] ${context.propName} (${structType}) at ${this._reader.position}`);
 
     if (structType === 'DateTime' || structType === 'Timespan') {
        return {
@@ -403,6 +414,7 @@ export class StreamDecoder {
   private asMapProp(context: P.PropertyParseContext): P.MapProp {
     const keyPropType = this._reader.readString();
     const valuePropType = this._reader.readString();
+    console.log(`[Map] ${context.propName}: ${keyPropType} -> ${valuePropType}`);
     
     // Skip 5 bytes (1 separator + 4 unknown, often 0)
     this._reader.seek(this._reader.position + 5);

@@ -33,6 +33,7 @@ export const enum ProType {
   MapProperty = 'MapProperty',
   ArrayProperty = 'ArrayProperty',
   TextProperty = 'TextProperty',
+  Alias = 'Alias',
 }
 
 export type PropertyParseContext = {
