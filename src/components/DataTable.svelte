@@ -1,11 +1,4 @@
 <script lang="ts">
-  /**
-   * DataTable component for displaying stream decoder steps.
-   * Features:
-   * - Incremental building support
-   * - Pagination (max 100 rows per page)
-   * - Autoscroll/auto-navigate to the last page on data updates
-   */
   import type { DecodeStepRow } from '../types/table';
 
   interface Props {
@@ -38,41 +31,60 @@
     }
     return String(val);
   }
+
+  function opcodeClass(opcode: string): string {
+    switch (opcode) {
+      case 'FixAscii':
+        return 'opcode--ascii';
+      case 'FixInt32':
+        return 'opcode--int32';
+      case 'DummyI32':
+        return 'opcode--dummy';
+      default:
+        return 'opcode--default';
+    }
+  }
 </script>
 
-<div class="data-table-wrapper mb-4">
-  <div class="table-responsive shadow-sm rounded border">
-    <table class="table table-striped table-hover table-sm align-middle mb-0">
-      <thead class="table-dark">
+<div class="data-table-wrapper">
+  <div class="table-shell">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
         <tr>
-          <th scope="col" style="width: 15%;">Opcode</th>
-          <th scope="col" style="width: 15%;">Args</th>
-          <th scope="col" style="width: 30%;">Value</th>
-          <th scope="col" style="width: 40%;">Bytes</th>
+          <th scope="col" class="col-idx">#</th>
+          <th scope="col" class="col-opcode">Opcode</th>
+          <th scope="col" class="col-args">Args</th>
+          <th scope="col" class="col-value">Value</th>
+          <th scope="col" class="col-bytes">Bytes</th>
         </tr>
       </thead>
       <tbody>
         {#each displayedRows as row, i (startIndex + i)}
-          <tr>
-            <td>
-              <span class="badge bg-secondary font-monospace">{row.opcode}</span>
+          <tr class="step-row">
+            <td class="col-idx">
+              <span class="row-idx">{startIndex + i + 1}</span>
             </td>
-            <td>
-              <span class="font-monospace">{row.args}</span>
+            <td class="col-opcode">
+              <span class="opcode {opcodeClass(row.opcode)}">{row.opcode}</span>
             </td>
-            <td>
+            <td class="col-args">
+              <span class="mono muted">{row.args || '—'}</span>
+            </td>
+            <td class="col-value">
               <span class="value-text">{formatValue(row.value)}</span>
             </td>
-            <td class="byte-data">
-              <code>{row.bytes}</code>
+            <td class="col-bytes">
+              <code class="byte-hex">{row.bytes}</code>
             </td>
           </tr>
         {/each}
         {#if rows.length === 0}
-          <tr>
-            <td colspan="4" class="text-center py-5 text-muted">
-              <div class="d-flex flex-column align-items-center">
-                <span>No decode steps yet — load a file and click Next</span>
+          <tr class="empty-row">
+            <td colspan="5">
+              <div class="empty-state">
+                <span class="empty-icon" aria-hidden="true">⬡</span>
+                <p class="empty-title">No decode steps yet</p>
+                <p class="empty-hint">Load a save file, then click <strong>Next</strong> to decode one opcode at a time.</p>
               </div>
             </td>
           </tr>
@@ -82,17 +94,13 @@
   </div>
 
   {#if totalPages > 1}
-    <nav aria-label="Table pagination" class="mt-3">
-      <ul class="pagination pagination-sm justify-content-center flex-wrap">
+    <nav aria-label="Table pagination" class="pagination-nav">
+      <ul class="pagination pagination-sm justify-content-center flex-wrap mb-0">
         <li class="page-item" class:disabled={currentPage === 1}>
-          <button class="page-link" onclick={() => goToPage(1)} title="First Page">
-            &laquo;&laquo;
-          </button>
+          <button class="page-link" onclick={() => goToPage(1)} title="First Page">««</button>
         </li>
         <li class="page-item" class:disabled={currentPage === 1}>
-          <button class="page-link" onclick={() => goToPage(currentPage - 1)} title="Previous Page">
-            &laquo;
-          </button>
+          <button class="page-link" onclick={() => goToPage(currentPage - 1)} title="Previous Page">«</button>
         </li>
 
         {#each Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
@@ -108,50 +116,201 @@
         {/each}
 
         <li class="page-item" class:disabled={currentPage === totalPages}>
-          <button class="page-link" onclick={() => goToPage(currentPage + 1)} title="Next Page">
-            &raquo;
-          </button>
+          <button class="page-link" onclick={() => goToPage(currentPage + 1)} title="Next Page">»</button>
         </li>
         <li class="page-item" class:disabled={currentPage === totalPages}>
-          <button class="page-link" onclick={() => goToPage(totalPages)} title="Last Page">
-            &raquo;&raquo;
-          </button>
+          <button class="page-link" onclick={() => goToPage(totalPages)} title="Last Page">»»</button>
         </li>
       </ul>
-      <div class="text-center text-muted x-small">
-        Page {currentPage} of {totalPages} &bull; Items {startIndex + 1} to {endIndex} of {rows.length}
-      </div>
+      <p class="pagination-meta">
+        Page {currentPage} of {totalPages} · items {startIndex + 1}–{endIndex} of {rows.length}
+      </p>
     </nav>
   {/if}
 </div>
 
 <style>
-  .font-monospace {
-    font-family: var(--bs-font-monospace);
+  .data-table-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
 
-  .value-text {
-    word-break: break-all;
-  }
-
-  .byte-data {
-    font-family: var(--bs-font-monospace);
-    font-size: 0.75rem;
-    word-break: break-all;
-    max-width: 0;
-    width: 40%;
+  .table-shell {
+    background: var(--st-bg-elevated);
+    border: 1px solid var(--st-border);
+    border-radius: var(--st-radius);
+    overflow: hidden;
+    box-shadow: var(--st-shadow);
   }
 
   .table {
+    font-size: 0.875rem;
+    margin: 0;
+  }
+
+  thead th {
+    background: var(--st-bg-surface);
+    color: var(--st-text-subtle);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--st-border);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--st-border-subtle);
+    vertical-align: middle;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .col-idx {
+    width: 3rem;
+    text-align: center;
+  }
+
+  .col-opcode {
+    width: 8rem;
+  }
+
+  .col-args {
+    width: 5rem;
+  }
+
+  .col-value {
+    min-width: 8rem;
+  }
+
+  .col-bytes {
+    width: 40%;
+  }
+
+  .row-idx {
+    font-family: var(--st-mono);
+    font-size: 0.75rem;
+    color: var(--st-text-subtle);
+  }
+
+  .opcode {
+    display: inline-block;
+    font-family: var(--st-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.55rem;
+    border-radius: var(--st-radius-sm);
+    border: 1px solid transparent;
+  }
+
+  .opcode--ascii {
+    background: rgba(163, 113, 247, 0.12);
+    border-color: rgba(163, 113, 247, 0.3);
+    color: #bc8cff;
+  }
+
+  .opcode--int32 {
+    background: rgba(88, 166, 255, 0.12);
+    border-color: rgba(88, 166, 255, 0.3);
+    color: #79c0ff;
+  }
+
+  .opcode--dummy {
+    background: rgba(210, 153, 34, 0.12);
+    border-color: rgba(210, 153, 34, 0.3);
+    color: #e3b341;
+  }
+
+  .opcode--default {
+    background: var(--st-bg-surface);
+    border-color: var(--st-border);
+    color: var(--st-text-muted);
+  }
+
+  .mono {
+    font-family: var(--st-mono);
+    font-size: 0.8rem;
+  }
+
+  .muted {
+    color: var(--st-text-muted);
+  }
+
+  .value-text {
+    font-family: var(--st-mono);
     font-size: 0.85rem;
+    color: var(--st-text);
+    word-break: break-all;
   }
 
-  .x-small {
-    font-size: 0.7rem;
+  .byte-hex {
+    font-family: var(--st-mono);
+    font-size: 0.78rem;
+    color: #ff7b72;
+    background: rgba(255, 123, 114, 0.08);
+    padding: 0.2rem 0.45rem;
+    border-radius: 4px;
+    word-break: break-all;
+    white-space: normal;
   }
 
-  .badge {
-    font-size: 0.7rem;
-    padding: 0.35em 0.65em;
+  .empty-row td {
+    padding: 0;
+    border: none;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3.5rem 1.5rem;
+    text-align: center;
+  }
+
+  .empty-icon {
+    font-size: 2rem;
+    color: var(--st-text-subtle);
+    opacity: 0.5;
+    margin-bottom: 0.75rem;
+  }
+
+  .empty-title {
+    margin: 0 0 0.35rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--st-text-muted);
+  }
+
+  .empty-hint {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--st-text-subtle);
+    max-width: 28rem;
+    line-height: 1.5;
+  }
+
+  .empty-hint strong {
+    color: var(--st-success);
+    font-weight: 600;
+  }
+
+  .pagination-nav {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .pagination-meta {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--st-text-subtle);
+    font-family: var(--st-mono);
   }
 </style>
