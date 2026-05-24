@@ -1,0 +1,30 @@
+---
+description: GVAS parsing invariants, debugging, and completion criteria
+globs: src/tracker/**
+alwaysApply: false
+---
+
+# GVAS Parsing
+
+Full field layouts and property tables: [AGENTS.md](../../AGENTS.md).
+
+## Completion gate
+
+Do not start item-tracking work until deserialization runs on `public/SBS00.sav` to EOF without desync. Run `pnpm test` after parser changes; add hex fixtures for new property paths.
+
+## Desync debugging
+
+- "Unsupported type" or absurd string length (e.g. `0xbf1ec20b`) → parser out of sync; verify the **previous** property consumed exactly `Size` bytes.
+- Collection items: primitives omit Name/Type/Size headers; `StructProperty` items include headers (sometimes with an extra 1-byte separator in arrays).
+- `ByteProperty`: use metadata `EnumName` — enum is a string; raw byte is a single number.
+- Unknown game types (e.g. `SELostProperty`): skip value using header `Size` if structure is unknown.
+- Trailing data after top-level `None` is valid — do not force PropertyTag parsing past EOF.
+
+## Safety
+
+Respect `BinaryReader` limits (max 1024 bytes per variable read). Reject corrupt length/count fields early.
+
+## Tests
+
+- Unit tests: `BinaryReader.test.ts`, `RingBuffer.test.ts`, `StreamDecoderTest.test.ts`
+- Integration: full sample save decode before phase 2

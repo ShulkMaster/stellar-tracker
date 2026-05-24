@@ -1,0 +1,34 @@
+---
+description: Stellar Tracker product vision, phases, and platform constraints
+alwaysApply: true
+---
+
+# Stellar Tracker — Project Context
+
+## Product
+
+Client-only web app for **Stellar Blade** save files. Players upload a `.sav` file; the app parses it and (phase 2) shows collected items and where missing items are located.
+
+## Stack
+
+- TypeScript, Vite, Svelte 5, Bootstrap 5, Vitest
+- **No backend** — all logic runs in the browser
+- **Evergreen browsers only** — no IE or legacy polyfills
+- Prefer modern APIs: `ReadableStream`, `ArrayBuffer`, `DataView`, `TextDecoder`, `fetch`, `File`
+
+## UX priorities
+
+Efficiency, responsiveness, and snappy interactions. Avoid blocking the main thread on large saves; prefer incremental/streaming work where possible.
+
+## Development phases
+
+1. **Current:** Reliable deserialization — parser must read the full save (`public/SBS00.sav`) to EOF without desync. No item-tracking UI until this passes.
+2. **Next:** Item tracker — map parsed properties to collectibles and missing locations.
+
+Do not build tracking features, game databases, or map UIs until phase 1 is complete.
+
+## Binary format reference
+
+GVAS / Unreal save layout, property types, and FString rules: [AGENTS.md](../../AGENTS.md).
+
+Agent rule index: `.cursor/rules/` (`parser-pipeline.mdc`, `gvas-parsing.mdc`, `typescript-standards.mdc`, `svelte-ui.mdc`).
