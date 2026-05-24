@@ -38,4 +38,4 @@ alwaysApply: false
 3. Map completed reads to `PropertyTag` and call `StreamAssembler.append`.
 4. Every property value must consume exactly the header `Size` bytes.
 
-Format details: [AGENTS.md](../../AGENTS.md).
+GVAS field layouts: `gvas-format.mdc`.

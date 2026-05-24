@@ -1,0 +1,136 @@
+---
+description: Unreal Engine GVAS save file format reference for Stellar Blade
+alwaysApply: true
+---
+
+# GVAS Save File Format (.sav)
+
+Stellar Blade saves are **Unreal Engine SaveGame (GVAS)** with a custom **EVAS** prefix in front of the standard Unreal header.
+
+All multi-byte integers and floats are **little-endian**.
+
+## 1. File structure
+
+EVAS prefix, GVAS header, custom version table, save class name, property list, optional trailing data.
+
+### 1.1 EVAS prefix (8 bytes)
+
+| Offset | Field | Type | Notes |
+|--------|-------|------|-------|
+| `0x00` | Magic | ASCII (4) | `EVAS` |
+| `0x04` | Version | Int32 | Stellar Blade EVAS version (observed `1`) |
+
+### 1.2 GVAS header (variable)
+
+| Field | Type | Notes |
+|-------|------|-------|
+| Magic | ASCII (4) | `GVAS` |
+| Save Game File Version | Int32 | Observed `2` |
+| Package File Version | Int32 | Unreal package version (e.g. `525`) |
+| Engine Major | Uint16 | |
+| Engine Minor | Uint16 | |
+| Engine Patch | Uint16 | |
+| Engine Changelist | Uint32 | `0` when unset |
+| Engine Branch | FString | e.g. `++UE4+Release-4.26` |
+| Custom Version Format | Int32 | `3` (GUIDs) |
+| Custom Version Count | Int32 | N entries follow |
+| Custom Versions | `{ GUID(16), Version(Int32) }[N]` | 20 bytes each |
+| Save Class Name | FString | e.g. `/Script/SB.SBSaveGame` |
+
+The fixed engine version block is **10 bytes** (2+2+2+4), **followed by a Branch FString**. Earlier docs that said "12 bytes" were wrong.
+
+### 1.3 Property list
+
+Each property tag:
+
+1. **Name** — FString
+2. **Type** — FString (`FloatProperty`, `StrProperty`, …)
+3. **Size** — Int32 (bytes in **Value** only — metadata bytes are not included)
+4. **ArrayIndex** — Int32
+5. **Type-specific metadata** — varies (see §2); empty for primitives like `IntProperty`/`FloatProperty`/`StrProperty`
+6. **HasPropertyGuid** — Byte (`0` or `1`)
+7. **PropertyGuid** — 16 bytes, present only if HasPropertyGuid == 1
+8. **Value** — `Size` bytes
+
+The single byte that previously read as "separator 0x00" is the `HasPropertyGuid` flag. It applies to every property type, not just `Int64Property`. Treat it generically.
+
+The list ends with a property whose `Name` is `None`. Files may contain a small trailing footer; see §6.
+
+### 1.4 Worked example — `public/SBS00.sav`
+
+| Offset | Bytes | Meaning |
+|--------|-------|---------|
+| `0x00` | `45 56 41 53` | EVAS |
+| `0x04` | `01 00 00 00` | EVAS version `1` |
+| `0x08` | `47 56 41 53` | GVAS |
+| `0x0C` | `02 00 00 00` | SaveGameFileVersion `2` |
+| `0x10` | `0D 02 00 00` | PackageFileVersion `525` |
+| `0x14` | `04 00 1A 00 02 00 00 00 00 00` | Engine `4.26.2` changelist `0` |
+| `0x1E` | `13 00 00 00 …` | Branch FString `++UE4+Release-4.26` |
+| `0x35` | `03 00 00 00` | CustomVersionFormat `3` |
+| `0x39` | `38 00 00 00` | 56 custom versions follow |
+| `0x49D` | `16 00 00 00 …` | SaveClassName `/Script/SB.SBSaveGame` |
+| `0x4B7` | first property tag | `NewGameCreateTime : Int64Property` |
+
+Use `.cursor/skills/save-hex-inspect/SKILL.md` to reproduce these reads from the shell.
+
+## 2. Property types
+
+Metadata listed below is the **type-specific metadata** (step 5 of the tag); the `HasPropertyGuid` byte (and optional GUID) always follows, then Value.
+
+### Primitives
+
+- **IntProperty / UInt32Property**: no metadata. Value = 4 bytes. `Size = 4`.
+- **Int64Property**: no metadata. Value = 8 bytes. `Size = 8`.
+- **FloatProperty**: no metadata. Value = 4 bytes (Float32). `Size = 4`.
+- **DoubleProperty**: no metadata. Value = 8 bytes (Float64). `Size = 8`.
+- **StrProperty / NameProperty**: no metadata. Value = FString. `Size` covers the FString bytes.
+- **BoolProperty**: metadata is a single `BoolVal` byte (`0`/`1`). `Size = 0` (the bool is **not** in Value).
+
+### Collections
+
+- **ArrayProperty**: metadata `ItemType` (FString). Value = `ItemCount` (Int32) + items. Primitive items omit per-item tag headers; `StructProperty` items include them.
+- **MapProperty**: metadata `KeyType` (FString) + `ValueType` (FString). Value = 4-byte unused/padding + `EntryCount` (Int32) + (key, value) pairs.
+- **SetProperty**: metadata `ItemType` (FString). Value = 4-byte unused/padding + `ItemCount` (Int32) + items.
+
+### StructProperty
+
+Metadata: `StructType` (FString) + 16-byte `StructGuid`. (Note: this `StructGuid` is part of the type-specific metadata; the trailing `HasPropertyGuid` byte is separate.)
+
+- **Specialized** (`Vector`, `Rotator`, `Quat`, `Guid`, `DateTime`, `LinearColor`): raw fixed layout (e.g. `Vector` = 3× Float32).
+- **Generic**: nested property list ending in a `None` tag.
+
+### Other
+
+- **EnumProperty**: metadata `EnumName` (FString). Value = FString.
+- **ByteProperty**: metadata `EnumName` (FString). If `EnumName != "None"` Value is an FString; otherwise Value is a single byte (`Size = 1`).
+- **TextProperty**: namespaces + localized strings; complex, not fully implemented.
+
+## 3. FString encoding
+
+`Length` (Int32) then data:
+
+- **Length > 0**: ASCII/UTF-8; `Length` includes the trailing `\0`.
+- **Length < 0**: UTF-16LE (UCS-2); char count = `-Length`; bytes = `(-Length) * 2`; includes `\0\0`.
+- **Length = 0**: empty string (no data bytes follow).
+
+## 4. Debugging
+
+1. Desync (unsupported type, garbage string length, negative-looking length such as `0xbf1ec20b`) → the previous property did not consume exactly its `Size` bytes. `Size` covers Value only; type-specific metadata, `HasPropertyGuid`, and the optional GUID are extra.
+2. Array/Map items: primitives omit headers; `StructProperty` items include them.
+3. Safety: cap string/array sizes (project uses **1024 bytes max per variable read** in `BinaryReader`).
+4. **ByteProperty**: enum vs byte is decided by `EnumName` metadata, not by `Size`.
+5. **BoolProperty** has `Size = 0`; the value lives in the metadata `BoolVal` byte. Reading 0 value bytes is correct.
+6. If `HasPropertyGuid == 1`, the next 16 bytes are a GUID, not the start of the Value.
+
+## 5. BinaryReader log (`DataRow`)
+
+When logging is enabled: Type, Value, Byte Range (`start-end`), Byte Data (hex). Used by `DataTable` for step-by-step debug.
+
+## 6. Trailing data
+
+After the top-level `None`, files may contain a small footer (game-specific buffer, sometimes a hash/CRC) or larger blobs (thumbnails, snapshots). `SBS00.sav` ends with 8 trailing bytes after the final `None`. Do **not** attempt to parse trailing data as PropertyTag; treat as opaque until its layout is known.
+
+## 7. Custom property types
+
+Game-specific types (e.g. `SELostProperty`) use the standard tag header; skip the Value via `Size` if the inner format is unknown.

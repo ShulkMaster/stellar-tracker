@@ -6,25 +6,42 @@ alwaysApply: false
 
 # GVAS Parsing
 
-Full field layouts and property tables: [AGENTS.md](../../AGENTS.md).
+Byte layout and property tables: `gvas-format.mdc` (always applied).
+Shell-side hex inspection workflows: `.cursor/skills/save-hex-inspect/SKILL.md`.
 
 ## Completion gate
 
-Do not start item-tracking work until deserialization runs on `public/SBS00.sav` to EOF without desync. Run `pnpm test` after parser changes; add hex fixtures for new property paths.
+Do not start item-tracking until deserialization runs on `public/SBS00.sav` to EOF without desync. Run `pnpm test` after parser changes; add hex fixtures for new paths.
 
-## Desync debugging
+## Invariants
 
-- "Unsupported type" or absurd string length (e.g. `0xbf1ec20b`) → parser out of sync; verify the **previous** property consumed exactly `Size` bytes.
-- Collection items: primitives omit Name/Type/Size headers; `StructProperty` items include headers (sometimes with an extra 1-byte separator in arrays).
-- `ByteProperty`: use metadata `EnumName` — enum is a string; raw byte is a single number.
-- Unknown game types (e.g. `SELostProperty`): skip value using header `Size` if structure is unknown.
-- Trailing data after top-level `None` is valid — do not force PropertyTag parsing past EOF.
+- Every property **Value** must consume exactly its `Size` bytes. Type-specific metadata, the `HasPropertyGuid` flag byte, and the optional 16-byte `PropertyGuid` are **not** part of `Size`.
+- `HasPropertyGuid` is a generic 1-byte flag that follows the type-specific metadata of **every** tag. When `1`, a 16-byte GUID follows before the Value.
+- Primitives in arrays/maps: no item tag header; `StructProperty` items: with header.
+- `ByteProperty`: check metadata `EnumName` for string vs raw byte.
+- `BoolProperty` has `Size = 0`; the value lives in the metadata `BoolVal` byte.
+- Unknown types (e.g. `SELostProperty`): skip using `Size`.
+- Trailing data after top-level `None` is valid — do not parse as PropertyTag past EOF (`SBS00.sav` has 8 trailing bytes).
 
 ## Safety
 
-Respect `BinaryReader` limits (max 1024 bytes per variable read). Reject corrupt length/count fields early.
+`BinaryReader` caps variable reads at 1024 bytes. Reject corrupt lengths/counts early.
 
-## Tests
+## Debugging desync
 
-- Unit tests: `BinaryReader.test.ts`, `RingBuffer.test.ts`, `StreamDecoderTest.test.ts`
-- Integration: full sample save decode before phase 2
+**Primary tool:** `pnpm re` — runs the real parser against `public/SBS00.sav`, keeps every step + every byte-read in memory, and on failure prints the trailing log slice plus a hex window with the failing offset marked. See `re.ts` at the repo root.
+
+Workflow:
+
+1. Run `pnpm re` to test current progress. Exit 0 = clean stop; exit 1 = parser threw.
+2. On failure, read the printed step tail and byte-read tail; identify the last "good" step.
+3. Re-run with `--limit N` to stop just before the bad step, or `--from N --count M` to print an earlier slice — walk backwards until the inconsistency is obvious.
+4. Cross-check with `xxd -s 0xOFFSET -l 96 public/SBS00.sav`.
+5. The skill `save-hex-inspect` has lower-level decode loops (FString, property tag) for ad-hoc inspection.
+
+## Tests and harness
+
+- Smoke harness: `pnpm re` (Node-runnable TS script at repo root). Use after every parser change to confirm progress and catch regressions.
+- Unit tests: `BinaryReader.test.ts`, `RingBuffer.test.ts`, `StreamDecoderTest.test.ts`.
+- Fixture rule: smallest byte range that reproduces the case, copied via `dd` from `SBS00.sav`, with the hex and decoded interpretation in the test comment.
+- Integration target: full `SBS00.sav` decode to EOF via `pnpm re` (exit 0, `100.00%`, "EOF reached") before phase 2.

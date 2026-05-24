@@ -6,6 +6,11 @@ alwaysApply: false
 
 # TypeScript Standards
 
+## Style
+
+- Prefer a **functional** style: pure functions, immutable data, minimal class state where a function + closure suffices.
+- Prefer **`type`** over **`interface`** for object shapes and unions.
+
 ## Typing
 
 - Use `ProType` and `PropertyTag` discriminated unions from `types/safeFile.ts` — avoid `any` except transitional `StructProp.value`.

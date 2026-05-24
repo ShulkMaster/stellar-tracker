@@ -5,30 +5,52 @@ alwaysApply: true
 
 # Stellar Tracker — Project Context
 
+## Overview
+
+Reverse-engineering **Stellar Blade** save files. Saves use **Unreal Engine SaveGame (GVAS)** with a custom **EVAS** header, then version and standard Unreal header. Deserialization uses a **stream + state machine** pattern for nested binary data.
+
+## Core components
+
+- `BinaryReader` — endianness, primitives, FString, optional byte log
+- `RingBuffer` — decode-program opcode queue (state machine commands)
+- `StreamDecoder` — executes program against the reader
+- `StreamAssembler` — builds key:value `StelarSaveFile` from `PropertyTag`s
+
 ## Product
 
-Client-only web app for **Stellar Blade** save files. Players upload a `.sav` file; the app parses it and (phase 2) shows collected items and where missing items are located.
+Client-only web app. Players upload `.sav`; the app parses and (phase 2) shows collected items and missing locations.
 
 ## Stack
 
 - TypeScript, Vite, Svelte 5, Bootstrap 5, Vitest
-- **No backend** — all logic runs in the browser
-- **Evergreen browsers only** — no IE or legacy polyfills
-- Prefer modern APIs: `ReadableStream`, `ArrayBuffer`, `DataView`, `TextDecoder`, `fetch`, `File`
+- **No backend** — browser only
+- **Evergreen browsers** — no IE; modern APIs (`ReadableStream`, `DataView`, `TextDecoder`, `fetch`, `File`)
 
-## UX priorities
+## UX
 
-Efficiency, responsiveness, and snappy interactions. Avoid blocking the main thread on large saves; prefer incremental/streaming work where possible.
+Efficiency, responsiveness, snappy UI. Avoid blocking the main thread on large saves.
 
-## Development phases
+## Phases
 
-1. **Current:** Reliable deserialization — parser must read the full save (`public/SBS00.sav`) to EOF without desync. No item-tracking UI until this passes.
-2. **Next:** Item tracker — map parsed properties to collectibles and missing locations.
+1. **Current:** Full deserialization to EOF on `public/SBS00.sav` without desync — no tracking UI until done.
+2. **Next:** Item tracker from parsed properties.
 
-Do not build tracking features, game databases, or map UIs until phase 1 is complete.
+## Agent rules (`.cursor/rules/`)
 
-## Binary format reference
+| Rule | Scope |
+|------|--------|
+| `gvas-format.mdc` | GVAS byte layout (always on) |
+| `parser-pipeline.mdc` | `src/tracker/**` architecture |
+| `gvas-parsing.mdc` | Parser invariants and tests |
+| `typescript-standards.mdc` | `**/*.{ts,tsx}` |
+| `svelte-ui.mdc` | `**/*.svelte` |
 
-GVAS / Unreal save layout, property types, and FString rules: [AGENTS.md](../../AGENTS.md).
+## Project skills (`.cursor/skills/`)
 
-Agent rule index: `.cursor/rules/` (`parser-pipeline.mdc`, `gvas-parsing.mdc`, `typescript-standards.mdc`, `svelte-ui.mdc`).
+| Skill | Use for |
+|-------|---------|
+| `save-hex-inspect` | Shell-side inspection of `.sav` bytes with `xxd`/`hexdump`/`od`/`dd`/`strings`/`python3` — locating offsets, FString decoding, desync hunting, save diffs |
+
+## Harness
+
+`pnpm re` runs `re.ts` (root) — drives the real parser against `public/SBS00.sav`, keeps every step + byte-read in memory, prints log tail + hex window on failure. Primary feedback loop while extending the parser.
