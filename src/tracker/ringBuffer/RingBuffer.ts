@@ -66,6 +66,15 @@ export class RingBuffer {
     this.pushInt16(ints);
   }
 
+  public fixUint16(ints: number): void {
+    this.pushByte(Opcode.FixUint16);
+    this.pushInt16(ints);
+  }
+
+  public fieldString(): void {
+    this.pushByte(Opcode.FieldString);
+  }
+
   public pushByte(value: number): void {
     this.ensureFree(1);
     this._buffer[this._tail & this._mask] = value & 0xff;

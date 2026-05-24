@@ -33,10 +33,19 @@ export class StreamDecoder {
   }
 
   private initializeState(): void {
-    // EVAS header
+    // EVAS prefix
     this._state.fixAscii(4);
-    // EVAS version
     this._state.fixInt32(1);
+    // GVAS header
+    this._state.fixAscii(4);
+    this._state.fixInt32(1); // save game file version
+    this._state.fixInt32(1); // package file version
+    // engine version block (major, minor, patch, changelist)
+    this._state.fixUint16(3);
+    this._state.fixInt32(1);
+    this._state.fieldString(); // engine branch
+    this._state.fixInt32(1); // custom version format
+    this._state.fixInt32(1); // custom version count — custom versions follow
   }
 
   public next(): DecodeStepRow {
@@ -77,6 +86,29 @@ export class StreamDecoder {
           bytes: this.hexFromPosition(start),
         };
       }
+      case Opcode.FixUint16: {
+        const count = this._state.int16();
+        const start = this._reader.position;
+        const value = count === 1
+          ? this._reader.readUint16()
+          : this.readUint16Batch(count);
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: String(count),
+          value,
+          bytes: this.hexFromPosition(start),
+        };
+      }
+      case Opcode.FieldString: {
+        const start = this._reader.position;
+        const value = this._reader.readString();
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: '',
+          value,
+          bytes: this.hexFromPosition(start),
+        };
+      }
       default:
         throw new Error(`Unknown opcode identifier ${opcode}`);
     }
@@ -86,6 +118,14 @@ export class StreamDecoder {
     const result = new Array<number>(count);
     for (let i = 0; i < count; i++) {
       result[i] = this._reader.readInt32();
+    }
+    return result;
+  }
+
+  private readUint16Batch(count: number): number[] {
+    const result = new Array<number>(count);
+    for (let i = 0; i < count; i++) {
+      result[i] = this._reader.readUint16();
     }
     return result;
   }

@@ -10,10 +10,21 @@ export const enum Opcode {
    * the next uint16 is the number of 32-bit integers to read.
    */
   FixInt32 = 2,
+  /**
+   * FixUint16 is a fixed-length 16-bit unsigned integer.
+   * the next uint16 is the number of 16-bit integers to read.
+   */
+  FixUint16 = 3,
+  /**
+   * FieldString reads an Unreal FString from the file.
+   */
+  FieldString = 4,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.DummyI32]: 'DummyI32',
   [Opcode.FixAscii]: 'FixAscii',
   [Opcode.FixInt32]: 'FixInt32',
+  [Opcode.FixUint16]: 'FixUint16',
+  [Opcode.FieldString]: 'FieldString',
 };
