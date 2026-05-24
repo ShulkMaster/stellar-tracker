@@ -54,6 +54,9 @@ importers:
       svelte-check:
         specifier: ^4.4.8
         version: 4.4.8(picomatch@4.0.3)(svelte@5.55.7(@typescript-eslint/types@8.56.1))(typescript@5.9.3)
+      svelte-json-tree:
+        specifier: ^2.2.0
+        version: 2.2.0(svelte@5.55.7(@typescript-eslint/types@8.56.1))
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
@@ -1214,6 +1217,11 @@ packages:
     peerDependenciesMeta:
       svelte:
         optional: true
+
+  svelte-json-tree@2.2.0:
+    resolution: {integrity: sha512-zcfepTrJ6xhpdgRZEujmiFh+ainRw7HO4Bsoh8PMAsm7fkgUPtnrZi3An8tmCFY8jajYhMrauHsd1S1XTeuiCw==}
+    peerDependencies:
+      svelte: ^4.0.0
 
   svelte@5.55.7:
     resolution: {integrity: sha512-ymI5ykLPwIHW839E053FQbI1G+jnRFJEw3Kv5Y4njixVWywQBx+NUFpkkKyk5LIb36Fg9DVXSYpqiGekLD0hyw==}
@@ -2426,6 +2434,10 @@ snapshots:
       postcss-selector-parser: 7.1.1
       semver: 7.7.4
     optionalDependencies:
+      svelte: 5.55.7(@typescript-eslint/types@8.56.1)
+
+  svelte-json-tree@2.2.0(svelte@5.55.7(@typescript-eslint/types@8.56.1)):
+    dependencies:
       svelte: 5.55.7(@typescript-eslint/types@8.56.1)
 
   svelte@5.55.7(@typescript-eslint/types@8.56.1):
