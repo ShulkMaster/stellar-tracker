@@ -48,7 +48,7 @@ export class RingBuffer {
     return this._buffer.buffer === other._buffer.buffer;
   }
 
-  public backingBufferRef(): ArrayBuffer {
+  public backingBufferRef(): ArrayBufferLike {
     return this._buffer.buffer;
   }
 

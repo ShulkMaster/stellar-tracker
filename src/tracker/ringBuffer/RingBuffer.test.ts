@@ -15,6 +15,8 @@ describe('RingBuffer encode/decode', () => {
     const buffer = RingBuffer.create(4);
     buffer.fixInt32(1);
     expect(buffer.decode()).toBe(Opcode.FixInt32);
+    expect(buffer.available).toBe(2);
+    expect(buffer.int16()).toBe(1);
     expect(buffer.available).toBe(0);
   });
 

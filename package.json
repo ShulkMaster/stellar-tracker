@@ -29,7 +29,6 @@
     "globals": "^17.4.0",
     "prettier": "^3.8.1",
     "svelte-check": "^4.4.8",
-    "svelte-json-tree": "^2.2.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.0-beta.13",
