@@ -1,12 +1,14 @@
 import globals from 'globals';
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
-import litPlugin from 'eslint-plugin-lit';
+import sveltePlugin from 'eslint-plugin-svelte';
+import svelteParser from 'svelte-eslint-parser';
 import prettierConfig from 'eslint-config-prettier';
 
 export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  ...sveltePlugin.configs['flat/recommended'],
   {
     languageOptions: {
       globals: {
@@ -17,13 +19,12 @@ export default tseslint.config(
     },
   },
   {
-    plugins: {
-      lit: litPlugin,
-    },
-    rules: {
-      ...litPlugin.configs.recommended.rules,
-      'lit/no-useless-template-literals': 'error',
-      'lit/no-invalid-html': 'error',
+    files: ['**/*.svelte'],
+    languageOptions: {
+      parser: svelteParser,
+      parserOptions: {
+        parser: tseslint.parser,
+      },
     },
   },
   {
@@ -37,6 +38,6 @@ export default tseslint.config(
   },
   prettierConfig,
   {
-    ignores: ['dist/', 'node_modules/'],
+    ignores: ['dist/', 'node_modules/', '.svelte-kit/'],
   },
 );

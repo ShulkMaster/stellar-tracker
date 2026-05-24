@@ -1,211 +1,99 @@
-import type * as P from 'types/safeFile';
-import { ProType } from 'types/safeFile';
+import type { DecodeStepRow } from 'types/table';
 import { BinaryReader } from '../binaryReader/BinaryReader';
-
-function hex(buffer: ArrayBufferLike): string {
-  const bytes = new Uint8Array(buffer);
-  return [...bytes]
-      .map(b => b.toString(16).padStart(2, "0"))
-      .join(" ");
-}
+import { toHex } from '../decoder/decoder';
+import { RingBuffer } from 'tracker/ringBuffer/RingBuffer';
+import { Opcode, OPCODE_NAMES } from 'tracker/ringBuffer/Opcodes';
 
 export class StreamDecoder {
   private readonly _reader: BinaryReader;
-  private readonly _ctx: P.PropertyParseContext = {
-    propName: '',
-    propType: '',
-    byteSize: 0,
-    arrayIndex: 0,
-  };
+  private _state: RingBuffer;
 
   constructor(reader: BinaryReader) {
     this._reader = reader;
+    this._state = RingBuffer.create(1024);
+    this.initializeState();
   }
 
-  decodeHeader(): P.SaveHeader {
-    const stelarHeader = this._reader.readASCII(4);
-    const stelarVersion = this._reader.readInt32();
-    const unrealHeader = this._reader.readASCII(4);
-    const unrealVersion = this._reader.readInt32();
-    const packageVersion = this._reader.readInt32();
-    const majorVersion = this._reader.readUint16();
-    const minorVersion = this._reader.readUint16();
-    const patchVersion = this._reader.readUint16();
-    const changelistVersion = this._reader.readInt32();
-    const engineBranch = this._reader.readString();
-    const customVersionFormat = this._reader.readInt32();
-    const customVersionCount = this._reader.readInt32();
-
-    const customVersions = [];
-    for (let i = 0; i < customVersionCount; i++) {
-      customVersions.push({
-        guid: this._reader.readGUID(),
-        version: this._reader.readInt32(),
-      });
-    }
-
-    const saveClassName = this._reader.readString();
-
-    return {
-      stelarHeader,
-      stelarVersion,
-      unrealHeader,
-      unrealVersion,
-      packageVersion,
-      majorVersion,
-      minorVersion,
-      patchVersion,
-      changelistVersion,
-      engineBranch,
-      customVersionFormat,
-      customVersionCount,
-      customVersions,
-      saveClassName,
-    }
+  public get canStep(): boolean {
+    return this._state.available > 0;
   }
 
-  public decodeProperty(): P.PropertyTag {
-    const propName = this._reader.readString();
-
-    if (propName === ProType.None) {
-      return {
-        name: propName,
-        type: ProType.None,
-        value: undefined,
-      } as any;
-    }
-
-    const propType = this._reader.readString();
-    const byteSize = this._reader.readInt32();
-    const arrayIndex = this._reader.readInt32();
-
-    this._ctx.propName = propName;
-    this._ctx.propType = propType;
-    this._ctx.byteSize = byteSize;
-    this._ctx.arrayIndex = arrayIndex;
-
-    return this.castValue(this._ctx);
+  public get position(): number {
+    return this._reader.position;
   }
 
-  private castValue(context: P.PropertyParseContext): P.PropertyTag {
-    switch (context.propType) {
-      case ProType.Int64Property: {
-        return this.asInt64Prop(context);
+  public get totalSize(): number {
+    return this._reader.size;
+  }
+
+  public reset(): void {
+    this._reader.seek(0);
+    this._state = RingBuffer.create(1024);
+    this.initializeState();
+  }
+
+  private initializeState(): void {
+    // EVAS header
+    this._state.fixAscii(4);
+    // EVAS version
+    this._state.fixInt32(1);
+  }
+
+  public next(): DecodeStepRow {
+    const opcode = this._state.decode();
+
+    switch (opcode) {
+      case Opcode.DummyI32: {
+        const start = this._reader.position;
+        const value = this._reader.readInt32();
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: '',
+          value,
+          bytes: this.hexFromPosition(start),
+        };
       }
-      case ProType.MapProperty: {
-        return this.asMapProp(context);
+      case Opcode.FixAscii: {
+        const len = this._state.int16();
+        const start = this._reader.position;
+        const value = this._reader.readASCII(len);
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: String(len),
+          value,
+          bytes: this.hexFromPosition(start),
+        };
       }
-      case ProType.NameProperty: {
-        return this.asNameProp(context, this._reader.readString());
+      case Opcode.FixInt32: {
+        const count = this._state.int16();
+        const start = this._reader.position;
+        const value = count === 1
+          ? this._reader.readInt32()
+          : this.readInt32Batch(count);
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: String(count),
+          value,
+          bytes: this.hexFromPosition(start),
+        };
       }
-      case ProType.StructProperty: {
-        return this.asStructProp(context);
-      }
-      case 'Name': {
-        return this.asNameProp(context, this._reader.readString());
-      }
+      default:
+        throw new Error(`Unknown opcode identifier ${opcode}`);
     }
-
-    throw new Error(`Unsupported type: ${context.propType}`);
   }
 
-  private asInt64Prop(context: P.PropertyParseContext): P.Int64Prop {
-    const hasTag = this._reader.readByte();
-    let guid: string | undefined = undefined;
-
-    if (hasTag) {
-      guid = this._reader.readGUID();
-    }
-
-    const value = this._reader.readInt64();
-
-    return {
-      name: context.propName,
-      type: ProType.Int64Property,
-      guid,
-      value,
-    };
-  }
-
-  private asNameProp(context: P.PropertyParseContext, value: string): P.NameProp {
-    return {
-      name: context.propName,
-      type: ProType.NameProperty,
-      value,
-    };
-  }
-
-  private asStructProp(context: P.PropertyParseContext): P.StructProp {
-    const structType = this._reader.readString();
-    const guid = this._reader.readGUID();
-    const hasTag = this._reader.readByte();
-    if (hasTag) {
-      this._reader.readGUID();
-    }
-
-    const value: Record<string, P.PropertyTag> = {};
-    if (structType === 'DateTime' || structType === 'Timespan') {
-       return {
-         name: context.propName,
-         type: ProType.StructProperty,
-         value: this._reader.readInt64(),
-       }
-    }
-
-    while (true) {
-      const prop = this.decodeProperty();
-      if (prop.name === ProType.None) break;
-      value[prop.name] = prop;
-    }
-
-    return {
-      name: context.propName,
-      type: ProType.StructProperty,
-      value,
-    };
-  }
-
-  private asMapProp(context: P.PropertyParseContext): P.MapProp {
-    const keyPropType = this._reader.readString();
-    const valuePropType = this._reader.readString();
-
-    const hasGuid = this._reader.readByte();
-    if (hasGuid) {
-      this._reader.readGUID();
-    }
-
-    this._reader.readInt32(); // 4 null bytes?
-    const count = this._reader.readInt32();
-    const value: Record<string, P.PropertyTag> = {};
-
+  private readInt32Batch(count: number): number[] {
+    const result = new Array<number>(count);
     for (let i = 0; i < count; i++) {
-      const key = this.decodeValue(keyPropType, 'Key');
-      const val = this.decodeValue(valuePropType, 'Value');
-
-      if (typeof key === 'string') {
-        value[key] = val;
-      } else {
-        value[`key_${i}`] = val;
-      }
+      result[i] = this._reader.readInt32();
     }
-
-    return {
-      name: context.propName,
-      type: ProType.MapProperty,
-      value,
-    };
+    return result;
   }
 
-  private decodeValue(type: string, name: string): any {
-    const context: P.PropertyParseContext = {
-      propName: name,
-      propType: type,
-      byteSize: 0,
-      arrayIndex: 0,
-      guidTag: undefined,
-    };
-
-    const prop = this.castValue(context);
-    return prop.value;
+  private hexFromPosition(start: number): string {
+    const end = this._reader.position;
+    const view = this._reader._view;
+    const bytes = new Uint8Array(view.buffer, view.byteOffset + start, end - start);
+    return toHex(bytes);
   }
 }
