@@ -1,5 +1,5 @@
-import { StreamDecoder } from './StreamDecoder';
-import { BinaryReader } from '../binaryReader/BinaryReader';
+import { StreamDecoder } from './StreamDecoder.ts';
+import { BinaryReader } from '../binaryReader/BinaryReader.ts';
 import { describe, it, expect } from 'vitest';
 
 describe('StreamDecoder', () => {

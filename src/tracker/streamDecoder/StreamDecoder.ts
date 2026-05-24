@@ -1,8 +1,8 @@
-import type { DecodeStepRow } from 'types/table';
-import { BinaryReader } from '../binaryReader/BinaryReader';
-import { toHex } from '../decoder/decoder';
-import { RingBuffer } from 'tracker/ringBuffer/RingBuffer';
-import { Opcode, OPCODE_NAMES } from 'tracker/ringBuffer/Opcodes';
+import type { DecodeStepRow } from '../../types/table.ts';
+import { BinaryReader } from '../binaryReader/BinaryReader.ts';
+import { toHex } from '../decoder/decoder.ts';
+import { RingBuffer } from '../ringBuffer/RingBuffer.ts';
+import { Opcode, OPCODE_NAMES } from '../ringBuffer/Opcodes.ts';
 
 export class StreamDecoder {
   private readonly _reader: BinaryReader;

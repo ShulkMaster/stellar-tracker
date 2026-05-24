@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BinaryReader } from './BinaryReader';
+import { BinaryReader } from './BinaryReader.ts';
 
 describe('BinaryReader', () => {
   it('should read int32 (little endian)', () => {

@@ -1,4 +1,4 @@
-import type { DataRow } from 'types/table';
+import type { DataRow } from '../../types/table.ts';
 import { toHex } from '../decoder/decoder.ts';
 
 type ReadStream = ReadableStream<Uint8Array<ArrayBuffer>>;

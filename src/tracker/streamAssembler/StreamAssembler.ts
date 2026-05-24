@@ -1,4 +1,4 @@
-import type { PropertyTag, SaveHeader, StelarSaveFile } from 'types/safeFile';
+import type { PropertyTag, SaveHeader, StelarSaveFile } from '../../types/safeFile.ts';
 
 export class StreamAssembler {
   private readonly _root: StelarSaveFile;
