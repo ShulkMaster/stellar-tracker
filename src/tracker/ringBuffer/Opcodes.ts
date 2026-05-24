@@ -10,4 +10,10 @@ export const enum Opcode {
    * the next uint16 is the number of 32-bit integers to read.
    */
   FixInt32 = 2,
+}
+
+export const OPCODE_NAMES: Record<Opcode, string> = {
+  [Opcode.DummyI32]: 'DummyI32',
+  [Opcode.FixAscii]: 'FixAscii',
+  [Opcode.FixInt32]: 'FixInt32',
 };

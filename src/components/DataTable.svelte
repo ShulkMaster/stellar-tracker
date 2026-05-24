@@ -1,16 +1,15 @@
 <script lang="ts">
   /**
-   * DataTable component for displaying decoded save file properties.
+   * DataTable component for displaying stream decoder steps.
    * Features:
    * - Incremental building support
    * - Pagination (max 100 rows per page)
    * - Autoscroll/auto-navigate to the last page on data updates
-   * - Support for string, number, and object values (with JSON formatting)
    */
-  import type { DataRow } from '../types/table';
+  import type { DecodeStepRow } from '../types/table';
 
   interface Props {
-    rows: DataRow[];
+    rows: DecodeStepRow[];
   }
 
   let { rows = [] }: Props = $props();
@@ -23,11 +22,8 @@
   let endIndex = $derived(Math.min(startIndex + pageSize, rows.length));
   let displayedRows = $derived(rows.slice(startIndex, endIndex));
 
-  // Stick to last page when rows change
   $effect(() => {
     if (rows.length > 0) {
-      // Accessing rows.length creates a dependency
-      // We want to move to the last page whenever the total number of items grows
       currentPage = totalPages;
     }
   });
@@ -36,16 +32,9 @@
     currentPage = Math.max(1, Math.min(page, totalPages));
   }
 
-  function formatValue(val: any): string {
-    if (val === null || val === undefined) return '';
-    if (typeof val === 'object') {
-      try {
-        return JSON.stringify(val, (_, value) =>
-          typeof value === 'bigint' ? value.toString() + 'n' : value
-        , 2);
-      } catch (e) {
-        return String(val);
-      }
+  function formatValue(val: string | number | number[]): string {
+    if (Array.isArray(val)) {
+      return val.join(', ');
     }
     return String(val);
   }
@@ -56,32 +45,26 @@
     <table class="table table-striped table-hover table-sm align-middle mb-0">
       <thead class="table-dark">
         <tr>
-          <th scope="col" style="width: 15%;">Type</th>
-          <th scope="col" style="width: 40%;">Value</th>
-          <th scope="col" style="width: 15%;">Byte Range</th>
-          <th scope="col" style="width: 30%;">Byte Data (ASCII)</th>
+          <th scope="col" style="width: 15%;">Opcode</th>
+          <th scope="col" style="width: 15%;">Args</th>
+          <th scope="col" style="width: 30%;">Value</th>
+          <th scope="col" style="width: 40%;">Bytes</th>
         </tr>
       </thead>
       <tbody>
         {#each displayedRows as row, i (startIndex + i)}
           <tr>
             <td>
-              <span class="badge bg-secondary font-monospace">{row.type}</span>
+              <span class="badge bg-secondary font-monospace">{row.opcode}</span>
             </td>
             <td>
-              {#if typeof row.value === 'object'}
-                <div class="json-value">
-                  <pre class="m-0 p-1"><code>{formatValue(row.value)}</code></pre>
-                </div>
-              {:else}
-                <span class="value-text">{row.value}</span>
-              {/if}
+              <span class="font-monospace">{row.args}</span>
             </td>
             <td>
-              <small class="text-muted font-monospace">{row.byteRange}</small>
+              <span class="value-text">{formatValue(row.value)}</span>
             </td>
             <td class="byte-data">
-              <code>{row.byteData}</code>
+              <code>{row.bytes}</code>
             </td>
           </tr>
         {/each}
@@ -89,7 +72,7 @@
           <tr>
             <td colspan="4" class="text-center py-5 text-muted">
               <div class="d-flex flex-column align-items-center">
-                <span>No data entries found</span>
+                <span>No decode steps yet — load a file and click Next</span>
               </div>
             </td>
           </tr>
@@ -146,17 +129,6 @@
   .font-monospace {
     font-family: var(--bs-font-monospace);
   }
-  
-  .json-value pre {
-    max-height: 120px;
-    overflow-y: auto;
-    background-color: rgba(0, 0, 0, 0.03);
-    border-radius: 4px;
-    font-size: 0.75rem;
-    line-height: 1.2;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
 
   .value-text {
     word-break: break-all;
@@ -166,8 +138,8 @@
     font-family: var(--bs-font-monospace);
     font-size: 0.75rem;
     word-break: break-all;
-    max-width: 0; /* Allows cell to shrink and use word-break */
-    width: 30%;
+    max-width: 0;
+    width: 40%;
   }
 
   .table {
@@ -181,14 +153,5 @@
   .badge {
     font-size: 0.7rem;
     padding: 0.35em 0.65em;
-  }
-
-  /* Custom scrollbar for JSON pre */
-  .json-value pre::-webkit-scrollbar {
-    width: 4px;
-  }
-  .json-value pre::-webkit-scrollbar-thumb {
-    background: #ccc;
-    border-radius: 4px;
   }
 </style>

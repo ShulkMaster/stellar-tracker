@@ -55,7 +55,7 @@
       </button>
     {:else}
       <button class="btn btn-success" onclick={onStep} disabled={isEOF}>
-        {isEOF ? 'Finished' : 'Next Step'}
+        {isEOF ? 'Finished' : 'Next'}
       </button>
       <button class="btn btn-outline-danger" onclick={onReset}>
         Reset
@@ -65,7 +65,7 @@
 
   {#if isEOF}
     <div class="alert alert-info mt-3 mb-0 py-2 small">
-      Reached end of file (None property encountered).
+      Program buffer empty — no more steps.
     </div>
   {/if}
 </div>

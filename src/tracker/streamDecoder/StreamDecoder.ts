@@ -1,18 +1,35 @@
-import type * as P from 'types/safeFile';
-import { ProType } from 'types/safeFile';
+import type { DecodeStepRow } from 'types/table';
 import { BinaryReader } from '../binaryReader/BinaryReader';
+import { toHex } from '../decoder/decoder';
 import { RingBuffer } from 'tracker/ringBuffer/RingBuffer';
-import { Opcode } from 'tracker/ringBuffer/Opcodes';
-
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+import { Opcode, OPCODE_NAMES } from 'tracker/ringBuffer/Opcodes';
 
 export class StreamDecoder {
   private readonly _reader: BinaryReader;
-  private readonly _state: RingBuffer;
+  private _state: RingBuffer;
 
   constructor(reader: BinaryReader) {
-    this._state = RingBuffer.create(1024);
     this._reader = reader;
+    this._state = RingBuffer.create(1024);
+    this.initializeState();
+  }
+
+  public get canStep(): boolean {
+    return this._state.available > 0;
+  }
+
+  public get position(): number {
+    return this._reader.position;
+  }
+
+  public get totalSize(): number {
+    return this._reader.size;
+  }
+
+  public reset(): void {
+    this._reader.seek(0);
+    this._state = RingBuffer.create(1024);
+    this.initializeState();
   }
 
   private initializeState(): void {
@@ -22,619 +39,61 @@ export class StreamDecoder {
     this._state.fixInt32(1);
   }
 
-  public next(): JsonValue {
+  public next(): DecodeStepRow {
     const opcode = this._state.decode();
+
     switch (opcode) {
-      case Opcode.DummyI32:
-        return this._state.int32();
-      case Opcode.FixAscii:
-        return this._state.ascii(this._state.int16());
-      case Opcode.FixInt32:
-        return this._state.int32(this._state.int16());
-    }
-
-    throw new Error(`Unknow opco identifier ${opcode}`);
-  }
-
-  public decode(): P.StelarSaveFile {
-    const header = this.decodeHeader();
-    const body: P.SaveBody = {};
-
-    try {
-      this.decodeBody(body);
-    } catch (e) {
-      console.error('[Parser] Fatal error during body decode:', e);
-    }
-
-    return { header, body };
-  }
-
-  public decodeFrom(propertyName: string): P.StelarSaveFile {
-    const header = this.decodeHeader();
-    const body: P.SaveBody = {};
-
-    // Search for the property name in the remaining buffer
-    const searchBytes = new TextEncoder().encode(propertyName);
-    const buffer = new Uint8Array(this._reader._view.buffer, this._reader._view.byteOffset, this._reader._view.byteLength);
-    
-    let offset = -1;
-    for (let i = this._reader.position; i < buffer.length - searchBytes.length; i++) {
-        let match = true;
-        for (let j = 0; j < searchBytes.length; j++) {
-            if (buffer[i + j] !== searchBytes[j]) {
-                match = false;
-                break;
-            }
-        }
-        if (match) {
-            // Check if it's preceded by its length (Int32)
-            const lengthOffset = i - 4;
-            if (lengthOffset >= 0) {
-                const len = this._reader._view.getInt32(lengthOffset, true);
-                if (len === searchBytes.length + 1) {
-                    offset = lengthOffset;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (offset !== -1) {
-        console.log(`[Parser] Jumping to property "${propertyName}" at ${offset}`);
-        this._reader.seek(offset);
-        this.decodeBody(body);
-    } else {
-        console.warn(`[Parser] Property "${propertyName}" not found. Starting from current position.`);
-        this.decodeBody(body);
-    }
-
-    return { header, body };
-  }
-
-  private decodeBody(body: P.SaveBody): void {
-    while (this._reader.position < this._reader.size) {
-      try {
-        const prop = this.decodeProperty();
-        if (prop.name === ProType.None) {
-          if (this._reader.position < this._reader.size) {
-            continue;
-          }
-          break;
-        }
-
-        // Ensure we don't overwrite properties with the same name at the top level
-        let name = prop.name;
-        if (body[name]) {
-          let suffix = 2;
-          while (body[`${name}_${suffix}`]) {
-            suffix++;
-          }
-          name = `${name}_${suffix}`;
-          console.warn(`[Parser] Duplicate property name "${prop.name}" found. Renaming to "${name}" to avoid overwriting.`);
-        }
-
-        body[name] = prop;
-      } catch (e) {
-        console.error(`[Parser] Error at position ${this._reader.position}:`, e);
-        break; // Cannot reliably recover from a parse error in GVAS
-      }
-    }
-  }
-
-  private decodeHeader(): P.SaveHeader {
-    const stelarHeader = this._reader.readASCII(4);
-    const stelarVersion = this._reader.readInt32();
-    const unrealHeader = this._reader.readASCII(4);
-    const unrealVersion = this._reader.readInt32();
-    const packageVersion = this._reader.readInt32();
-    const majorVersion = this._reader.readUint16();
-    const minorVersion = this._reader.readUint16();
-    const patchVersion = this._reader.readUint16();
-    const changelistVersion = this._reader.readInt32();
-    const engineBranch = this._reader.readString();
-    const customVersionFormat = this._reader.readInt32();
-    const customVersionCount = this._reader.readInt32();
-
-    const customVersions = [];
-    for (let i = 0; i < customVersionCount; i++) {
-      customVersions.push({
-        guid: this._reader.readGUID(),
-        version: this._reader.readInt32(),
-      });
-    }
-
-    const saveClassName = this._reader.readString();
-
-    return {
-      stelarHeader,
-      stelarVersion,
-      unrealHeader,
-      unrealVersion,
-      packageVersion,
-      majorVersion,
-      minorVersion,
-      patchVersion,
-      changelistVersion,
-      engineBranch,
-      customVersionFormat,
-      customVersionCount,
-      customVersions,
-      saveClassName,
-    }
-  }
-
-  public decodeProperty(depth: number = 0): P.PropertyTag {
-    const startPos = this._reader.position;
-    const propName = this._reader.readString();
-
-    if (propName === ProType.None) {
-      return {
-        name: propName,
-        type: ProType.None,
-        value: undefined,
-      } as any;
-    }
-
-    const propType = this._reader.readString();
-    const byteSize = this._reader.readInt32();
-    const arrayIndex = this._reader.readInt32();
-
-    const ctx: P.PropertyParseContext = {
-      propName,
-      propType,
-      byteSize,
-      arrayIndex,
-    };
-
-    if (depth === 0) {
-      console.log(`[Parser] Top-Level Prop: ${propName} (${propType}) at ${startPos}, size: ${byteSize}`);
-    }
-
-    const posBeforeValue = this._reader.position;
-    let prop: P.PropertyTag;
-
-    try {
-      prop = this.castValue(ctx);
-    } catch (e) {
-      if (depth === 0 && byteSize > 0) {
-        console.error(`[Parser] Failed to parse property "${propName}" at ${posBeforeValue}. Skipping ${byteSize} bytes.`, e);
-        this._reader.seek(posBeforeValue + 1 + byteSize);
+      case Opcode.DummyI32: {
+        const start = this._reader.position;
+        const value = this._reader.readInt32();
         return {
-          name: propName,
-          type: propType as any,
-          value: `Error: ${e instanceof Error ? e.message : String(e)}`,
+          opcode: OPCODE_NAMES[opcode],
+          args: '',
+          value,
+          bytes: this.hexFromPosition(start),
         };
       }
-      throw e;
-    }
-
-    // Robustness: For top-level properties, ensure we don't get out of sync.
-    // GVAS byteSize refers to the value part after the separator.
-    if (depth === 0 && byteSize > 0 && propType !== ProType.BoolProperty) {
-       const expectedPos = posBeforeValue + 1 + byteSize;
-       if (this._reader.position !== expectedPos) {
-           this._reader.seek(expectedPos);
-       }
-    }
-
-    return prop;
-  }
-
-  private castValue(context: P.PropertyParseContext, isCollectionItem: boolean = false): P.PropertyTag {
-    switch (context.propType) {
-      case ProType.Int64Property: {
-        return this.asInt64Prop(context, isCollectionItem);
+      case Opcode.FixAscii: {
+        const len = this._state.int16();
+        const start = this._reader.position;
+        const value = this._reader.readASCII(len);
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: String(len),
+          value,
+          bytes: this.hexFromPosition(start),
+        };
       }
-      case 'UInt64Property': {
-        return this.asInt64Prop(context, isCollectionItem);
+      case Opcode.FixInt32: {
+        const count = this._state.int16();
+        const start = this._reader.position;
+        const value = count === 1
+          ? this._reader.readInt32()
+          : this.readInt32Batch(count);
+        return {
+          opcode: OPCODE_NAMES[opcode],
+          args: String(count),
+          value,
+          bytes: this.hexFromPosition(start),
+        };
       }
-      case ProType.IntProperty: {
-        return this.asIntProp(context, isCollectionItem);
-      }
-      case 'Int16Property': {
-        return this.asInt16Prop(context, isCollectionItem);
-      }
-      case 'Int8Property': {
-        return this.asInt8Prop(context, isCollectionItem);
-      }
-      case 'UInt32Property': {
-        return this.asIntProp(context, isCollectionItem);
-      }
-      case 'UInt16Property': {
-        return this.asUint16Prop(context, isCollectionItem);
-      }
-      case ProType.FloatProperty: {
-        return this.asFloatProp(context, isCollectionItem);
-      }
-      case 'DoubleProperty': {
-        return this.asDoubleProp(context, isCollectionItem);
-      }
-      case ProType.BoolProperty: {
-        return this.asBoolProp(context, isCollectionItem);
-      }
-      case ProType.ByteProperty: {
-        return this.asByteProp(context, isCollectionItem);
-      }
-      case 'EnumProperty': {
-        return this.asEnumProp(context, isCollectionItem);
-      }
-      case ProType.StrProperty: {
-        return this.asStrProp(context, isCollectionItem);
-      }
-      case ProType.MapProperty: {
-        return this.asMapProp(context);
-      }
-      case ProType.ArrayProperty: {
-        return this.asArrayProp(context);
-      }
-      case 'SetProperty': {
-        return this.asSetProp(context);
-      }
-      case ProType.NameProperty: {
-        if (!isCollectionItem) {
-          this._reader.readByte(); // separator
-        }
-        return this.asNameProp(context, this._reader.readString());
-      }
-      case ProType.StructProperty: {
-        return this.asStructProp(context, isCollectionItem);
-      }
-      case 'Name': {
-        return this.asNameProp(context, this._reader.readString());
-      }
-      default: {
-        if (!isCollectionItem && context.byteSize > 0) {
-          this._reader.readByte(); // separator
-          this._reader.seek(this._reader.position + context.byteSize);
-          return {
-            name: context.propName,
-            type: context.propType as any,
-            value: `Blob(${context.byteSize})`,
-          };
-        }
-        throw new Error(`Unsupported type: ${context.propType} at ${this._reader.position}`);
-      }
+      default:
+        throw new Error(`Unknown opcode identifier ${opcode}`);
     }
   }
 
-  private asInt64Prop(context: P.PropertyParseContext, isCollectionItem: boolean): P.Int64Prop {
-    let guid: string | undefined = undefined;
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
+  private readInt32Batch(count: number): number[] {
+    const result = new Array<number>(count);
+    for (let i = 0; i < count; i++) {
+      result[i] = this._reader.readInt32();
     }
-
-    const value = this._reader.readInt64();
-
-    return {
-      name: context.propName,
-      type: ProType.Int64Property,
-      guid,
-      value,
-    };
-  }
-
-  private asIntProp(context: P.PropertyParseContext, isCollectionItem: boolean): P.IntProp {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readInt32();
-    return {
-      name: context.propName,
-      type: ProType.IntProperty,
-      value,
-    };
-  }
-
-  private asInt16Prop(context: P.PropertyParseContext, isCollectionItem: boolean): any {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readInt16();
-    return {
-      name: context.propName,
-      type: 'Int16Property',
-      value,
-    };
-  }
-
-  private asInt8Prop(context: P.PropertyParseContext, isCollectionItem: boolean): any {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readInt8();
-    return {
-      name: context.propName,
-      type: 'Int8Property',
-      value,
-    };
-  }
-
-  private asUint16Prop(context: P.PropertyParseContext, isCollectionItem: boolean): any {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readUint16();
-    return {
-      name: context.propName,
-      type: 'UInt16Property',
-      value,
-    };
-  }
-
-  private asFloatProp(context: P.PropertyParseContext, isCollectionItem: boolean): P.FloatProp {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readFloat32();
-    return {
-      name: context.propName,
-      type: ProType.FloatProperty,
-      value,
-    };
-  }
-
-  private asDoubleProp(context: P.PropertyParseContext, isCollectionItem: boolean): any {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readFloat64();
-    return {
-      name: context.propName,
-      type: 'DoubleProperty',
-      value,
-    };
-  }
-
-  private asBoolProp(context: P.PropertyParseContext, isCollectionItem: boolean): P.BoolProp {
-    const value = this._reader.readByte() !== 0;
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    } else {
-      // In collections, BoolProperty might not have a separator after the value
-      // but wait, usually BoolProperty in collections is just 1 byte.
-    }
-    return {
-      name: context.propName,
-      type: ProType.BoolProperty,
-      value,
-    };
-  }
-
-  private asByteProp(context: P.PropertyParseContext, isCollectionItem: boolean): P.ByteProp {
-    let enumName = 'None';
-    if (!isCollectionItem) {
-      enumName = this._reader.readString();
-      this._reader.readByte(); // separator
-    }
-
-    let value: string | number;
-    // In collections (Map keys/values), ByteProperty enums are stored as strings (Names)
-    if (isCollectionItem || enumName !== 'None') {
-      try {
-        value = this._reader.readString();
-      } catch (e) {
-        // Fallback for raw byte if string read fails (though unlikely to be caught here)
-        if (isCollectionItem) {
-           value = this._reader.readByte();
-        } else {
-           throw e;
-        }
-      }
-    } else {
-      value = this._reader.readByte();
-    }
-
-    return {
-      name: context.propName,
-      type: ProType.ByteProperty,
-      enumName,
-      value,
-    };
-  }
-
-  private asEnumProp(context: P.PropertyParseContext, isCollectionItem: boolean): any {
-    let enumName = 'None';
-    if (!isCollectionItem) {
-      enumName = this._reader.readString();
-      this._reader.readByte(); // separator
-    }
-
-    const value = this._reader.readString();
-
-    return {
-      name: context.propName,
-      type: 'EnumProperty',
-      enumName,
-      value,
-    };
-  }
-
-  private asStrProp(context: P.PropertyParseContext, isCollectionItem: boolean): P.StrProp {
-    if (!isCollectionItem) {
-      this._reader.readByte(); // separator
-    }
-    const value = this._reader.readString();
-    return {
-      name: context.propName,
-      type: ProType.StrProperty,
-      value,
-    };
-  }
-
-  private asNameProp(context: P.PropertyParseContext, value: string): P.NameProp {
-    return {
-      name: context.propName,
-      type: ProType.NameProperty,
-      value,
-    };
-  }
-
-  private asStructProp(context: P.PropertyParseContext, isCollectionItem: boolean, structType: string = 'Unknown'): P.StructProp {
-    if (!isCollectionItem) {
-      structType = this._reader.readString();
-      this._reader.readGUID();
-      this._reader.readByte(); // separator
-    }
-    const valueStart = this._reader.position;
-    console.log(`[Struct] ${context.propName} (${structType}) at ${this._reader.position}`);
-
-    let structValue: any;
-
-    if (structType === 'DateTime' || structType === 'Timespan') {
-      structValue = this._reader.readInt64();
-    } else if (structType === 'Vector' || structType === 'Rotator' || (isCollectionItem && context.propName.includes('Vector') && structType === 'Unknown')) {
-      structValue = {
-        x: this._reader.readFloat32(),
-        y: this._reader.readFloat32(),
-        z: this._reader.readFloat32(),
-      };
-    } else if (structType === 'Vector2D') {
-      structValue = {
-        x: this._reader.readFloat32(),
-        y: this._reader.readFloat32(),
-      };
-    } else if (structType === 'LinearColor' || structType === 'Quat') {
-      structValue = {
-        r: this._reader.readFloat32(),
-        g: this._reader.readFloat32(),
-        b: this._reader.readFloat32(),
-        a: this._reader.readFloat32(),
-      };
-    } else if (structType === 'Guid') {
-      structValue = this._reader.readGUID();
-    } else {
-      const value: Record<string, P.PropertyTag> = {};
-      while (true) {
-        const prop = this.decodeProperty(isCollectionItem ? 2 : 1);
-        if (prop.name === ProType.None) break;
-        value[prop.name] = prop;
-      }
-      structValue = value;
-    }
-
-    const result = {
-      name: context.propName,
-      type: ProType.StructProperty,
-      value: structValue,
-    };
-
-    if (!isCollectionItem && context.byteSize > 0) {
-        this._reader.seek(valueStart + context.byteSize);
-    }
-
     return result;
   }
 
-  private asMapProp(context: P.PropertyParseContext): P.MapProp {
-    const keyPropType = this._reader.readString();
-    const valuePropType = this._reader.readString();
-    
-    this._reader.readByte(); // separator
-    const valueStart = this._reader.position;
-
-    // Value starts with a 1-byte flag, then 4-byte padding, then EntryCount (Int32)
-    this._reader.readByte(); // flag
-    this._reader.readInt32(); // padding
-    const entries = this._reader.readInt32();
-
-    const value: Record<string, P.PropertyTag> = {};
-
-    for (let i = 0; i < entries; i++) {
-      const keyProp = this.decodeValue(keyPropType, 'Key', context.propName);
-      const valProp = this.decodeValue(valuePropType, 'Value', context.propName);
-
-      const key = keyProp.value;
-      if (typeof key === 'string') {
-        value[key] = valProp;
-      } else {
-        value[`key_${i}`] = valProp;
-      }
-    }
-
-    // Ensure we consumed exactly byteSize bytes for the value part
-    if (context.byteSize > 0) {
-      this._reader.seek(valueStart + context.byteSize);
-    }
-
-    return {
-      name: context.propName,
-      type: ProType.MapProperty,
-      entries,
-      value,
-    };
-  }
-
-  private asArrayProp(context: P.PropertyParseContext): P.ArrayProp {
-    const itemType = this._reader.readString();
-    this._reader.readByte(); // separator
-    const valueStart = this._reader.position;
-    const entries = this._reader.readInt32();
-
-    const value: any[] = [];
-    if (itemType === ProType.StructProperty && entries > 0) {
-        const innerName = this._reader.readString();
-        const innerType = this._reader.readString();
-        const innerSize = this._reader.readInt32();
-        const innerIndex = this._reader.readInt32();
-        const innerStructType = this._reader.readString();
-        this._reader.readGUID();
-        this._reader.readByte(); // separator
-
-        for (let i = 0; i < entries; i++) {
-            const innerCtx: P.PropertyParseContext = {
-                propName: innerName,
-                propType: innerType,
-                byteSize: innerSize,
-                arrayIndex: innerIndex,
-            };
-            value.push(this.asStructProp(innerCtx, true, innerStructType));
-        }
-    } else {
-        for (let i = 0; i < entries; i++) {
-            value.push(this.decodeValue(itemType, `${context.propName}_${i}`));
-        }
-    }
-
-    // Ensure we consumed exactly byteSize bytes for the value part
-    if (context.byteSize > 0) {
-        this._reader.seek(valueStart + context.byteSize);
-    }
-
-    return {
-      name: context.propName,
-      type: ProType.ArrayProperty,
-      itemType,
-      value,
-    };
-  }
-
-  private asSetProp(context: P.PropertyParseContext): any {
-    const itemType = this._reader.readString();
-    // SetProperty has 5 bytes after type (1 separator + 4 zeros)
-    this._reader.seek(this._reader.position + 5);
-    const entries = this._reader.readInt32();
-
-    const value: any[] = [];
-    for (let i = 0; i < entries; i++) {
-        value.push(this.decodeValue(itemType, `${context.propName}_${i}`));
-    }
-
-    return {
-      name: context.propName,
-      type: 'SetProperty',
-      itemType,
-      value,
-    };
-  }
-
-  private decodeValue(type: string, name: string, parentName: string = ''): P.PropertyTag {
-    const context: P.PropertyParseContext = {
-      propName: name === 'Value' && parentName ? parentName : name,
-      propType: type,
-      byteSize: 0,
-      arrayIndex: 0,
-    };
-
-    return this.castValue(context, true);
+  private hexFromPosition(start: number): string {
+    const end = this._reader.position;
+    const view = this._reader._view;
+    const bytes = new Uint8Array(view.buffer, view.byteOffset + start, end - start);
+    return toHex(bytes);
   }
 }

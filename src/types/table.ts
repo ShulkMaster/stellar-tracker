@@ -4,3 +4,10 @@ export interface DataRow {
   byteRange: string;
   byteData: string;
 }
+
+export interface DecodeStepRow {
+  opcode: string;
+  args: string;
+  value: string | number | number[];
+  bytes: string;
+}
