@@ -1,0 +1,41 @@
+---
+description: Parser pipeline architecture and component contracts
+globs: src/tracker/**
+alwaysApply: false
+---
+
+# Parser Pipeline
+
+## Data flow
+
+```
+.sav → ReadableStream chunks → BinaryReader → StreamDecoder (RingBuffer program) → StreamAssembler → plain JS object
+```
+
+## Layers
+
+| Layer | File | Role |
+|-------|------|------|
+| Binary I/O | `binaryReader/BinaryReader.ts` | Endianness, primitives, FString (`readString`), GUID; optional byte log; **1024-byte cap** on variable reads |
+| Opcode program | `ringBuffer/RingBuffer.ts`, `ringBuffer/Opcodes.ts` | Typed opcode queue — **not** raw file bytes |
+| Orchestration | `streamDecoder/StreamDecoder.ts` | Owns reader + program; `initializeState()` seeds opcodes; `next()` runs one step |
+| Assembly | `streamAssembler/StreamAssembler.ts` | `append(PropertyTag)` → `StelarSaveFile` via stack |
+| Types | `types/safeFile.ts` | `SaveHeader`, `PropertyTag`, `ProType` unions |
+
+## RingBuffer naming
+
+`RingBuffer` stores a **decode program** (opcodes like `FixAscii`, `FixInt32`). `StreamDecoder` pops opcodes and drives `BinaryReader`. Future states push more opcodes as the parse advances.
+
+## Target vs current
+
+- **Target:** Stream chunks → incremental decode → UI updates per property/step.
+- **Today:** `App.svelte` loads the full file (`fetch` + `response.bytes()`); `BinaryReader.fromStream` still concatenates to one buffer; decoder program is hardcoded EVAS header only.
+
+## Extending to full GVAS
+
+1. Add opcodes in `Opcodes.ts`.
+2. Enqueue via `RingBuffer` from `StreamDecoder` state transitions.
+3. Map completed reads to `PropertyTag` and call `StreamAssembler.append`.
+4. Every property value must consume exactly the header `Size` bytes.
+
+GVAS field layouts: `gvas-format.mdc`.

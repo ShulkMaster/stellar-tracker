@@ -1,18 +1,34 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import DataTable from './components/DataTable.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
-  import { BinaryReader } from './tracker/binaryReader/BinaryReader';
-  import { StreamDecoder } from './tracker/streamDecoder/StreamDecoder';
+  import { BinaryReader, StreamDecoder } from 'tracker';
   import type { DecodeStepRow } from './types/table';
 
   let decoder = $state<StreamDecoder | null>(null);
   let tableRows = $state<DecodeStepRow[]>([]);
   let fileLoaded = $state(false);
   let isLoading = $state(false);
+  let position = $state(0);
+  let totalSize = $state(0);
+  let canAdvance = $state(false);
+  let isFinished = $state(false);
 
   let stepCount = $derived(tableRows.length);
-  let canAdvance = $derived(decoder?.canStep ?? false);
-  let isFinished = $derived(fileLoaded && decoder !== null && !decoder.canStep);
+
+  function syncDecoderState() {
+    if (decoder === null) {
+      position = 0;
+      totalSize = 0;
+      canAdvance = false;
+      isFinished = false;
+      return;
+    }
+    position = decoder.position;
+    totalSize = decoder.totalSize;
+    canAdvance = decoder.canStep;
+    isFinished = fileLoaded && !decoder.canStep;
+  }
 
   async function loadFile() {
     isLoading = true;
@@ -24,6 +40,7 @@
       decoder = new StreamDecoder(reader);
       tableRows = [];
       fileLoaded = true;
+      syncDecoderState();
     } catch (e: unknown) {
       console.error(e);
       alert(e instanceof Error ? e.message : String(e));
@@ -35,19 +52,37 @@
   function step() {
     if (!decoder?.canStep) return;
     tableRows = [...tableRows, decoder.next()];
+    syncDecoderState();
+  }
+
+  function stepToClose() {
+    if (!decoder?.canStep) return;
+    const collected: DecodeStepRow[] = [];
+    while (decoder.canStep) {
+      const row = decoder.next();
+      collected.push(row);
+      if (row.kind === 'close' || row.kind === 'propNone') break;
+    }
+    tableRows = [...tableRows, ...collected];
+    syncDecoderState();
   }
 
   function reset() {
     decoder?.reset();
     tableRows = [];
+    syncDecoderState();
   }
+
+  onMount(() => {
+    void loadFile();
+  });
 </script>
 
 <div class="app">
   <header class="app-header">
     <div class="app-header-inner">
       <div class="app-brand">
-        <span class="app-logo" aria-hidden="true">◈</span>
+        <img class="app-logo" src="/logo.svg" alt="Stellar Blade Tracker" width="40" height="40" aria-hidden="true" />
         <div>
           <h1 class="app-title">Stellar Tracker</h1>
           <p class="app-subtitle">Save file stream decoder</p>
@@ -74,12 +109,13 @@
     <ControlPanel
       onLoad={loadFile}
       onStep={step}
+      onStepToClose={stepToClose}
       onReset={reset}
       canStep={fileLoaded}
       {isLoading}
       isEOF={isFinished}
-      position={decoder?.position ?? 0}
-      totalSize={decoder?.totalSize ?? 0}
+      {position}
+      {totalSize}
     />
 
     <section class="steps-section">
@@ -94,7 +130,9 @@
 
 <style>
   .app {
-    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
     background:
       radial-gradient(ellipse 80% 50% at 50% -20%, rgba(88, 166, 255, 0.08), transparent),
       var(--st-bg);
@@ -126,16 +164,10 @@
   }
 
   .app-logo {
-    display: flex;
-    align-items: center;
-    justify-content: center;
     width: 2.5rem;
     height: 2.5rem;
-    border-radius: var(--st-radius-sm);
-    background: linear-gradient(135deg, var(--st-accent-dim), var(--st-bg-surface));
-    border: 1px solid rgba(88, 166, 255, 0.25);
-    color: var(--st-accent);
-    font-size: 1.1rem;
+    display: block;
+    filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.25));
   }
 
   .app-title {
@@ -195,12 +227,17 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
   }
 
   .steps-section {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    flex: 1;
+    min-height: 0;
   }
 
   .section-header {

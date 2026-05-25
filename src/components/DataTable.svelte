@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DecodeStepRow } from '../types/table';
+  import type { DecodeStepRow } from 'types/table';
 
   interface Props {
     rows: DecodeStepRow[];
@@ -7,125 +7,161 @@
 
   let { rows = [] }: Props = $props();
 
-  const pageSize = 100;
-  let currentPage = $state(1);
-
-  let totalPages = $derived(Math.ceil(rows.length / pageSize) || 1);
-  let startIndex = $derived((currentPage - 1) * pageSize);
-  let endIndex = $derived(Math.min(startIndex + pageSize, rows.length));
-  let displayedRows = $derived(rows.slice(startIndex, endIndex));
+  let scrollEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
-    if (rows.length > 0) {
-      currentPage = totalPages;
-    }
+    const count = rows.length;
+    if (count === 0 || scrollEl === null) return;
+
+    requestAnimationFrame(() => {
+      scrollEl!.scrollTop = scrollEl!.scrollHeight;
+    });
   });
 
-  function goToPage(page: number) {
-    currentPage = Math.max(1, Math.min(page, totalPages));
-  }
-
-  function formatValue(val: string | number | number[]): string {
-    if (Array.isArray(val)) {
-      return val.join(', ');
+  function stepLabel(row: DecodeStepRow): string {
+    switch (row.kind) {
+      case 'read':
+        return row.opcode;
+      case 'tagHeader':
+        return 'TagHeader';
+      case 'control':
+        return row.label;
+      case 'yieldName':
+        return 'YieldName';
+      case 'openStruct':
+        return 'OpenStruct';
+      case 'openArray':
+        return 'OpenArray';
+      case 'openMap':
+        return 'OpenMap';
+      case 'close':
+        return 'Close';
+      case 'propNone':
+        return 'PropNone';
     }
-    return String(val);
   }
 
-  function opcodeClass(opcode: string): string {
-    switch (opcode) {
-      case 'FixAscii':
-        return 'opcode--ascii';
-      case 'FixInt32':
-        return 'opcode--int32';
-      case 'DummyI32':
-        return 'opcode--dummy';
+  function stepArgs(row: DecodeStepRow): string {
+    switch (row.kind) {
+      case 'read':
+        return row.index !== undefined ? `${row.args} [${row.index}]` : row.args;
+      case 'tagHeader':
+        return row.field;
+      case 'control':
+        return row.detail ?? '';
+      case 'yieldName':
+        return row.index !== undefined ? `${row.name} [${row.index}]` : row.name;
+      case 'openStruct':
+        return row.index !== undefined ? `${row.name} [${row.index}]` : row.name;
+      case 'openArray':
+        return row.count !== undefined ? `${row.name} ×${row.count}` : row.name;
+      case 'openMap':
+        return row.name;
+      case 'close':
+        return row.index !== undefined ? `[${row.index}]` : '';
       default:
-        return 'opcode--default';
+        return '';
+    }
+  }
+
+  function formatValue(row: DecodeStepRow): string {
+    if (row.kind === 'read' || row.kind === 'tagHeader') {
+      if (Array.isArray(row.value)) {
+        return row.value.join(', ');
+      }
+      return String(row.value);
+    }
+    return '—';
+  }
+
+  function rowBytes(row: DecodeStepRow): string {
+    if (row.kind === 'read' || row.kind === 'tagHeader') {
+      return row.bytes;
+    }
+    return '—';
+  }
+
+  function opcodeClass(row: DecodeStepRow): string {
+    switch (row.kind) {
+      case 'read':
+        switch (row.opcode) {
+          case 'FixAscii':
+          case 'FieldString':
+            return 'opcode--ascii';
+          case 'FixInt32':
+          case 'FixUint16':
+            return 'opcode--int32';
+          default:
+            return 'opcode--default';
+        }
+      case 'tagHeader':
+        return 'opcode--meta';
+      case 'control':
+        return 'opcode--control';
+      case 'yieldName':
+        return 'opcode--name';
+      case 'openStruct':
+      case 'openArray':
+      case 'openMap':
+        return 'opcode--container';
+      case 'close':
+      case 'propNone':
+        return 'opcode--control';
     }
   }
 </script>
 
 <div class="data-table-wrapper">
   <div class="table-shell">
-    <table class="table table-hover align-middle mb-0">
-      <thead>
-        <tr>
-          <th scope="col" class="col-idx">#</th>
-          <th scope="col" class="col-opcode">Opcode</th>
-          <th scope="col" class="col-args">Args</th>
-          <th scope="col" class="col-value">Value</th>
-          <th scope="col" class="col-bytes">Bytes</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each displayedRows as row, i (startIndex + i)}
-          <tr class="step-row">
-            <td class="col-idx">
-              <span class="row-idx">{startIndex + i + 1}</span>
-            </td>
-            <td class="col-opcode">
-              <span class="opcode {opcodeClass(row.opcode)}">{row.opcode}</span>
-            </td>
-            <td class="col-args">
-              <span class="mono muted">{row.args || '—'}</span>
-            </td>
-            <td class="col-value">
-              <span class="value-text">{formatValue(row.value)}</span>
-            </td>
-            <td class="col-bytes">
-              <code class="byte-hex">{row.bytes}</code>
-            </td>
+    <div class="table-scroll" bind:this={scrollEl}>
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th scope="col" class="col-idx">#</th>
+            <th scope="col" class="col-opcode">Opcode</th>
+            <th scope="col" class="col-args">Args</th>
+            <th scope="col" class="col-value">Value</th>
+            <th scope="col" class="col-bytes">Bytes</th>
           </tr>
-        {/each}
-        {#if rows.length === 0}
-          <tr class="empty-row">
-            <td colspan="5">
-              <div class="empty-state">
-                <span class="empty-icon" aria-hidden="true">⬡</span>
-                <p class="empty-title">No decode steps yet</p>
-                <p class="empty-hint">Load a save file, then click <strong>Next</strong> to decode one opcode at a time.</p>
-              </div>
-            </td>
-          </tr>
-        {/if}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each rows as row, i (i)}
+            <tr class="step-row">
+              <td class="col-idx">
+                <span class="row-idx">{i + 1}</span>
+              </td>
+              <td class="col-opcode">
+                <span class="opcode {opcodeClass(row)}">{stepLabel(row)}</span>
+              </td>
+              <td class="col-args">
+                <span class="mono muted">{stepArgs(row) || '—'}</span>
+              </td>
+              <td class="col-value">
+                <span class="value-text">{formatValue(row)}</span>
+              </td>
+              <td class="col-bytes">
+                <code class="byte-hex">{rowBytes(row)}</code>
+              </td>
+            </tr>
+          {/each}
+          {#if rows.length === 0}
+            <tr class="empty-row">
+              <td colspan="5">
+                <div class="empty-state">
+                  <span class="empty-icon" aria-hidden="true">⬡</span>
+                  <p class="empty-title">No decode steps yet</p>
+                  <p class="empty-hint">Load a save file, then click <strong>Next</strong> to decode one opcode at a time.</p>
+                </div>
+              </td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
   </div>
 
-  {#if totalPages > 1}
-    <nav aria-label="Table pagination" class="pagination-nav">
-      <ul class="pagination pagination-sm justify-content-center flex-wrap mb-0">
-        <li class="page-item" class:disabled={currentPage === 1}>
-          <button class="page-link" onclick={() => goToPage(1)} title="First Page">««</button>
-        </li>
-        <li class="page-item" class:disabled={currentPage === 1}>
-          <button class="page-link" onclick={() => goToPage(currentPage - 1)} title="Previous Page">«</button>
-        </li>
-
-        {#each Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-          if (totalPages <= 7) return i + 1;
-          let start = Math.max(1, currentPage - 3);
-          let end = Math.min(totalPages, start + 6);
-          if (end === totalPages) start = Math.max(1, end - 6);
-          return start + i;
-        }) as p}
-          <li class="page-item" class:active={currentPage === p}>
-            <button class="page-link" onclick={() => goToPage(p)}>{p}</button>
-          </li>
-        {/each}
-
-        <li class="page-item" class:disabled={currentPage === totalPages}>
-          <button class="page-link" onclick={() => goToPage(currentPage + 1)} title="Next Page">»</button>
-        </li>
-        <li class="page-item" class:disabled={currentPage === totalPages}>
-          <button class="page-link" onclick={() => goToPage(totalPages)} title="Last Page">»»</button>
-        </li>
-      </ul>
-      <p class="pagination-meta">
-        Page {currentPage} of {totalPages} · items {startIndex + 1}–{endIndex} of {rows.length}
-      </p>
-    </nav>
+  {#if rows.length > 0}
+    <p class="table-meta">{rows.length} step{rows.length === 1 ? '' : 's'}</p>
   {/if}
 </div>
 
@@ -133,15 +169,29 @@
   .data-table-wrapper {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    flex: 1;
+    min-height: 0;
+    max-height: 900px;
   }
 
   .table-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
     background: var(--st-bg-elevated);
     border: 1px solid var(--st-border);
     border-radius: var(--st-radius);
-    overflow: hidden;
     box-shadow: var(--st-shadow);
+    overflow: hidden;
+  }
+
+  .table-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
   }
 
   .table {
@@ -150,6 +200,9 @@
   }
 
   thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background: var(--st-bg-surface);
     color: var(--st-text-subtle);
     font-size: 0.7rem;
@@ -159,6 +212,7 @@
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--st-border);
     white-space: nowrap;
+    box-shadow: 0 1px 0 var(--st-border);
   }
 
   tbody td {
@@ -220,16 +274,34 @@
     color: #79c0ff;
   }
 
-  .opcode--dummy {
+  .opcode--default {
+    background: var(--st-bg-surface);
+    border-color: var(--st-border);
+    color: var(--st-text-muted);
+  }
+
+  .opcode--name {
+    background: rgba(63, 185, 80, 0.12);
+    border-color: rgba(63, 185, 80, 0.3);
+    color: #56d364;
+  }
+
+  .opcode--container {
     background: rgba(210, 153, 34, 0.12);
     border-color: rgba(210, 153, 34, 0.3);
     color: #e3b341;
   }
 
-  .opcode--default {
-    background: var(--st-bg-surface);
-    border-color: var(--st-border);
-    color: var(--st-text-muted);
+  .opcode--control {
+    background: rgba(248, 81, 73, 0.12);
+    border-color: rgba(248, 81, 73, 0.3);
+    color: #ff7b72;
+  }
+
+  .opcode--meta {
+    background: rgba(139, 148, 158, 0.1);
+    border-color: rgba(139, 148, 158, 0.25);
+    color: var(--st-text-subtle);
   }
 
   .mono {
@@ -300,17 +372,11 @@
     font-weight: 600;
   }
 
-  .pagination-nav {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .pagination-meta {
+  .table-meta {
     margin: 0;
     font-size: 0.75rem;
     color: var(--st-text-subtle);
     font-family: var(--st-mono);
+    text-align: right;
   }
 </style>

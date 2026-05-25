@@ -1,0 +1,36 @@
+---
+description: TypeScript conventions for Stellar Tracker
+globs: "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+# TypeScript Standards
+
+## Style
+
+- Prefer a **functional** style: pure functions, immutable data, minimal class state where a function + closure suffices.
+- Prefer **`type`** over **`interface`** for object shapes and unions.
+
+## Typing
+
+- Use `ProType` and `PropertyTag` discriminated unions from `types/safeFile.ts` — avoid `any` except transitional `StructProp.value`.
+- Prefer `bigint` for `Int64Property` values.
+
+## Binary reads
+
+- All endianness and string decoding go through `BinaryReader` — no ad-hoc `DataView` in decoder layers.
+- Use `DataView` and typed arrays; avoid manual bit shifts for primitives.
+- Reuse `tracker/decoder/decoder.ts` `toHex` for debug hex output.
+
+## Imports
+
+See `import-paths.mdc` for the full convention (baseUrl `src/`, no `.ts`/`.svelte` extensions, no `../../` chains).
+
+## Platform
+
+- No polyfills for legacy engines.
+- No Node-only APIs in `src/` — browser and Vitest only.
+
+## Changes to parser code
+
+Run `pnpm test` before finishing. Add focused Vitest cases with small `Uint8Array` fixtures for new read paths.

@@ -1,4 +1,4 @@
-import { Opcode } from './Opcodes.ts';
+import { Opcode } from './Opcodes';
 
 const SCRATCH_ASCII_MAX = 1024;
 
@@ -66,6 +66,130 @@ export class RingBuffer {
     this.pushInt16(ints);
   }
 
+  public fixUint16(ints: number): void {
+    this.pushByte(Opcode.FixUint16);
+    this.pushInt16(ints);
+  }
+
+  public fieldString(): void {
+    this.pushByte(Opcode.FieldString);
+  }
+
+  public fieldGuid(): void {
+    this.pushByte(Opcode.FieldGuid);
+  }
+
+  public fieldInt64(): void {
+    this.pushByte(Opcode.FieldInt64);
+  }
+
+  public fieldFloat32(): void {
+    this.pushByte(Opcode.FieldFloat32);
+  }
+
+  public fieldDouble64(): void {
+    this.pushByte(Opcode.FieldDouble64);
+  }
+
+  public fieldByte(): void {
+    this.pushByte(Opcode.FieldByte);
+  }
+
+  public valBool(): void {
+    this.pushByte(Opcode.ValBool);
+  }
+
+  public enterBody(): void {
+    this.pushByte(Opcode.EnterBody);
+  }
+
+  public skipBytes(count: number): void {
+    this.pushByte(Opcode.SkipBytes);
+    this.pushUint32(count);
+  }
+
+  public tagName(): void {
+    this.pushByte(Opcode.TagName);
+  }
+
+  public tagType(): void {
+    this.pushByte(Opcode.TagType);
+  }
+
+  public tagSize(): void {
+    this.pushByte(Opcode.TagSize);
+  }
+
+  public tagArrayIndex(): void {
+    this.pushByte(Opcode.TagArrayIndex);
+  }
+
+  public tagGuidFlag(): void {
+    this.pushByte(Opcode.TagGuidFlag);
+  }
+
+  public tagPropGuid(): void {
+    this.pushByte(Opcode.TagPropGuid);
+  }
+
+  public tagStructType(): void {
+    this.pushByte(Opcode.TagStructType);
+  }
+
+  public tagStructGuid(): void {
+    this.pushByte(Opcode.TagStructGuid);
+  }
+
+  public tagBoolVal(): void {
+    this.pushByte(Opcode.TagBoolVal);
+  }
+
+  public tagEnumName(): void {
+    this.pushByte(Opcode.TagEnumName);
+  }
+
+  public tagItemType(): void {
+    this.pushByte(Opcode.TagItemType);
+  }
+
+  public tagKeyType(): void {
+    this.pushByte(Opcode.TagKeyType);
+  }
+
+  public tagValueType(): void {
+    this.pushByte(Opcode.TagValueType);
+  }
+
+  public yieldName(name: string): void {
+    this.pushNamedOpcode(Opcode.YieldName, name);
+  }
+
+  public openStruct(name: string): void {
+    this.pushNamedOpcode(Opcode.OpenStruct, name);
+  }
+
+  public openArray(name: string): void {
+    this.pushNamedOpcode(Opcode.OpenArray, name);
+  }
+
+  public openMap(name: string): void {
+    this.pushNamedOpcode(Opcode.OpenMap, name);
+  }
+
+  public close(): void {
+    this.pushByte(Opcode.Close);
+  }
+
+  public propNone(): void {
+    this.pushByte(Opcode.PropNone);
+  }
+
+  private pushNamedOpcode(op: Opcode, name: string): void {
+    this.pushByte(op);
+    this.pushInt16(name.length);
+    this.pushAscii(name, name.length);
+  }
+
   public pushByte(value: number): void {
     this.ensureFree(1);
     this._buffer[this._tail & this._mask] = value & 0xff;
@@ -86,6 +210,11 @@ export class RingBuffer {
     this._tail += 4;
   }
 
+  public pushUint32(value: number): void {
+    this.writeUint32(this._tail, value);
+    this._tail += 4;
+  }
+
   public pushFloat(value: number): void {
     this.writeFloat32(this._tail, value);
     this._tail += 4;
@@ -100,11 +229,6 @@ export class RingBuffer {
       this._buffer[this._tail & this._mask] = code & 0xff;
       this._tail++;
     }
-  }
-
-  public pushDummyI32(value: number): void {
-    this.pushByte(Opcode.DummyI32);
-    this.pushInt32(value);
   }
 
   public decode(): Opcode {
@@ -148,6 +272,10 @@ export class RingBuffer {
       result[i] = this.readInt32();
     }
     return result;
+  }
+
+  public uint32(): number {
+    return this.readUint32();
   }
 
   public float(floats?: 1): number;
@@ -214,6 +342,14 @@ export class RingBuffer {
     }
   }
 
+  private writeUint32(index: number, value: number): void {
+    this.ensureFree(4);
+    this._scratch4View.setUint32(0, value, true);
+    for (let i = 0; i < 4; i++) {
+      this._buffer[(index + i) & this._mask] = this._scratch4[i]!;
+    }
+  }
+
   private writeFloat32(index: number, value: number): void {
     this.ensureFree(4);
     this._scratch4View.setFloat32(0, value, true);
@@ -237,6 +373,16 @@ export class RingBuffer {
       this._scratch4[i] = this._buffer[(this._head + i) & this._mask];
     }
     const value = this._scratch4View.getInt32(0, true);
+    this._head += 4;
+    return value;
+  }
+
+  private readUint32(): number {
+    this.ensureAvailable(4);
+    for (let i = 0; i < 4; i++) {
+      this._scratch4[i] = this._buffer[(this._head + i) & this._mask];
+    }
+    const value = this._scratch4View.getUint32(0, true);
     this._head += 4;
     return value;
   }

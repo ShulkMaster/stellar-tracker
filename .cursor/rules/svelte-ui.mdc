@@ -1,0 +1,29 @@
+---
+description: Svelte 5 and Bootstrap UI conventions
+globs: "**/*.svelte"
+alwaysApply: false
+---
+
+# Svelte UI
+
+## Framework
+
+- Svelte 5 runes: `$state`, `$derived`, `$props` — see `App.svelte`, `ControlPanel.svelte`.
+- Bootstrap 5 for layout, cards, buttons; theme tokens in `index.css` (`--st-*` variables).
+
+## Parser debug UI
+
+- `DataTable` + `DecodeStepRow` for step-by-step decode visibility.
+- `ControlPanel`: load, step, reset, byte progress.
+
+## File input (future)
+
+Use `File` API + `ReadableStream` from `file.stream()`; yield to the UI between decode steps to keep interactions snappy. Avoid loading entire saves into memory when streaming path is available.
+
+## Svelte MCP
+
+Use the Svelte MCP server tools when creating or editing `.svelte` files (workspace plugin).
+
+## Scope
+
+Item tracker screens and maps are phase 2 — do not add until parser reaches full-save EOF on `SBS00.sav`.
