@@ -11,6 +11,7 @@
     "baseUrl": "src",
     /* Bundler mode */
     "moduleResolution": "bundler",
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",

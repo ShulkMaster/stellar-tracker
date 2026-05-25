@@ -82,7 +82,7 @@
   <header class="app-header">
     <div class="app-header-inner">
       <div class="app-brand">
-        <span class="app-logo" aria-hidden="true">◈</span>
+        <img class="app-logo" src="/logo.svg" alt="Stellar Blade Tracker" width="40" height="40" aria-hidden="true" />
         <div>
           <h1 class="app-title">Stellar Tracker</h1>
           <p class="app-subtitle">Save file stream decoder</p>
@@ -164,16 +164,10 @@
   }
 
   .app-logo {
-    display: flex;
-    align-items: center;
-    justify-content: center;
     width: 2.5rem;
     height: 2.5rem;
-    border-radius: var(--st-radius-sm);
-    background: linear-gradient(135deg, var(--st-accent-dim), var(--st-bg-surface));
-    border: 1px solid rgba(88, 166, 255, 0.25);
-    color: var(--st-accent);
-    font-size: 1.1rem;
+    display: block;
+    filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.25));
   }
 
   .app-title {
