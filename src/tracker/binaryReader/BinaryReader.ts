@@ -1,5 +1,5 @@
-import type { DataRow } from '../../types/table.ts';
-import { toHex } from '../decoder/decoder.ts';
+import type { DataRow } from 'types/table';
+import { toHex } from 'tracker/decoder/decoder';
 
 type ReadStream = ReadableStream<Uint8Array<ArrayBuffer>>;
 
