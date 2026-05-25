@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Opcode } from './Opcodes.ts';
-import { RingBuffer } from './RingBuffer.ts';
+import { Opcode } from './Opcodes';
+import { RingBuffer } from './RingBuffer';
 
 describe('RingBuffer.create', () => {
   it('rounds requested capacity up to the next power of 2', () => {

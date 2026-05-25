@@ -32,6 +32,49 @@ export const enum Opcode {
   PropNone = 9,
   /** Reads a 16-byte Unreal GUID from the file. */
   FieldGuid = 10,
+
+  /** Reads an Int64 value from the file (8 bytes, little-endian). */
+  FieldInt64 = 11,
+  /** Reads a Float32 value from the file (4 bytes, little-endian). */
+  FieldFloat32 = 12,
+  /** Reads a Float64 value from the file (8 bytes, little-endian). */
+  FieldDouble64 = 13,
+  /** Reads a single byte value from the file. */
+  FieldByte = 14,
+  /** Emits the cached BoolProperty value (no wire bytes consumed). */
+  ValBool = 15,
+
+  /** Conditionally enqueues OpenStruct('body') + TagName when bytes remain. */
+  EnterBody = 16,
+  /** Advances the reader by N bytes (uint32 arg). Emits a placeholder read row. */
+  SkipBytes = 17,
+
+  /** GVAS property tag header — Name FString. None ends the current list. */
+  TagName = 18,
+  /** GVAS property tag header — Type FString. */
+  TagType = 19,
+  /** GVAS property tag header — Size Int32. */
+  TagSize = 20,
+  /** GVAS property tag header — ArrayIndex Int32. */
+  TagArrayIndex = 21,
+  /** GVAS property tag — HasPropertyGuid flag byte. */
+  TagGuidFlag = 22,
+  /** GVAS property tag — optional PropertyGuid (when flag == 1). */
+  TagPropGuid = 23,
+  /** StructProperty metadata — inner struct type FString. */
+  TagStructType = 24,
+  /** StructProperty metadata — inner struct GUID (16 bytes). */
+  TagStructGuid = 25,
+  /** BoolProperty metadata — BoolVal byte. */
+  TagBoolVal = 26,
+  /** ByteProperty / EnumProperty metadata — enum name FString. */
+  TagEnumName = 27,
+  /** ArrayProperty / SetProperty metadata — item type FString. */
+  TagItemType = 28,
+  /** MapProperty metadata — key type FString. */
+  TagKeyType = 29,
+  /** MapProperty metadata — value type FString. */
+  TagValueType = 30,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -46,4 +89,24 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.Close]: 'Close',
   [Opcode.PropNone]: 'PropNone',
   [Opcode.FieldGuid]: 'FieldGuid',
+  [Opcode.FieldInt64]: 'FieldInt64',
+  [Opcode.FieldFloat32]: 'FieldFloat32',
+  [Opcode.FieldDouble64]: 'FieldDouble64',
+  [Opcode.FieldByte]: 'FieldByte',
+  [Opcode.ValBool]: 'ValBool',
+  [Opcode.EnterBody]: 'EnterBody',
+  [Opcode.SkipBytes]: 'SkipBytes',
+  [Opcode.TagName]: 'TagName',
+  [Opcode.TagType]: 'TagType',
+  [Opcode.TagSize]: 'TagSize',
+  [Opcode.TagArrayIndex]: 'TagArrayIndex',
+  [Opcode.TagGuidFlag]: 'TagGuidFlag',
+  [Opcode.TagPropGuid]: 'TagPropGuid',
+  [Opcode.TagStructType]: 'TagStructType',
+  [Opcode.TagStructGuid]: 'TagStructGuid',
+  [Opcode.TagBoolVal]: 'TagBoolVal',
+  [Opcode.TagEnumName]: 'TagEnumName',
+  [Opcode.TagItemType]: 'TagItemType',
+  [Opcode.TagKeyType]: 'TagKeyType',
+  [Opcode.TagValueType]: 'TagValueType',
 };
