@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DecodeStepRow } from '../types/table';
+  import { isReadStep } from '../types/table';
 
   interface Props {
     rows: DecodeStepRow[];
@@ -25,23 +26,73 @@
     currentPage = Math.max(1, Math.min(page, totalPages));
   }
 
-  function formatValue(val: string | number | number[]): string {
-    if (Array.isArray(val)) {
-      return val.join(', ');
+  function stepLabel(row: DecodeStepRow): string {
+    switch (row.kind) {
+      case 'read':
+        return row.opcode;
+      case 'yieldName':
+        return 'YieldName';
+      case 'openStruct':
+        return 'OpenStruct';
+      case 'openArray':
+        return 'OpenArray';
+      case 'openMap':
+        return 'OpenMap';
+      case 'close':
+        return 'Close';
+      case 'propNone':
+        return 'PropNone';
     }
-    return String(val);
   }
 
-  function opcodeClass(opcode: string): string {
-    switch (opcode) {
-      case 'FixAscii':
-        return 'opcode--ascii';
-      case 'FixInt32':
-        return 'opcode--int32';
-      case 'DummyI32':
-        return 'opcode--dummy';
+  function stepArgs(row: DecodeStepRow): string {
+    switch (row.kind) {
+      case 'read':
+        return row.args;
+      case 'yieldName':
+      case 'openStruct':
+      case 'openArray':
+      case 'openMap':
+        return row.name;
       default:
-        return 'opcode--default';
+        return '';
+    }
+  }
+
+  function formatValue(row: DecodeStepRow): string {
+    if (!isReadStep(row)) {
+      return '—';
+    }
+    if (Array.isArray(row.value)) {
+      return row.value.join(', ');
+    }
+    return String(row.value);
+  }
+
+  function opcodeClass(row: DecodeStepRow): string {
+    switch (row.kind) {
+      case 'read':
+        switch (row.opcode) {
+          case 'FixAscii':
+          case 'FieldString':
+            return 'opcode--ascii';
+          case 'FixInt32':
+          case 'FixUint16':
+            return 'opcode--int32';
+          case 'DummyI32':
+            return 'opcode--dummy';
+          default:
+            return 'opcode--default';
+        }
+      case 'yieldName':
+        return 'opcode--name';
+      case 'openStruct':
+      case 'openArray':
+      case 'openMap':
+        return 'opcode--container';
+      case 'close':
+      case 'propNone':
+        return 'opcode--control';
     }
   }
 </script>
@@ -65,16 +116,16 @@
               <span class="row-idx">{startIndex + i + 1}</span>
             </td>
             <td class="col-opcode">
-              <span class="opcode {opcodeClass(row.opcode)}">{row.opcode}</span>
+              <span class="opcode {opcodeClass(row)}">{stepLabel(row)}</span>
             </td>
             <td class="col-args">
-              <span class="mono muted">{row.args || '—'}</span>
+              <span class="mono muted">{stepArgs(row) || '—'}</span>
             </td>
             <td class="col-value">
-              <span class="value-text">{formatValue(row.value)}</span>
+              <span class="value-text">{formatValue(row)}</span>
             </td>
             <td class="col-bytes">
-              <code class="byte-hex">{row.bytes}</code>
+              <code class="byte-hex">{isReadStep(row) ? row.bytes : '—'}</code>
             </td>
           </tr>
         {/each}
@@ -230,6 +281,24 @@
     background: var(--st-bg-surface);
     border-color: var(--st-border);
     color: var(--st-text-muted);
+  }
+
+  .opcode--name {
+    background: rgba(63, 185, 80, 0.12);
+    border-color: rgba(63, 185, 80, 0.3);
+    color: #56d364;
+  }
+
+  .opcode--container {
+    background: rgba(210, 153, 34, 0.12);
+    border-color: rgba(210, 153, 34, 0.3);
+    color: #e3b341;
+  }
+
+  .opcode--control {
+    background: rgba(248, 81, 73, 0.12);
+    border-color: rgba(248, 81, 73, 0.3);
+    color: #ff7b72;
   }
 
   .mono {

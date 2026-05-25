@@ -1,4 +1,4 @@
-import type { DecodeStepRow } from '../../types/table.ts';
+import type { DecodeStepRow, DecodeValue } from '../../types/table.ts';
 import { BinaryReader } from '../binaryReader/BinaryReader.ts';
 import { toHex } from '../decoder/decoder.ts';
 import { RingBuffer } from '../ringBuffer/RingBuffer.ts';
@@ -33,45 +33,59 @@ export class StreamDecoder {
   }
 
   private initializeState(): void {
-    // EVAS prefix
+    this._state.yieldName('stelarHeader');
     this._state.fixAscii(4);
+    this._state.yieldName('stelarVersion');
     this._state.fixInt32(1);
-    // GVAS header
+    this._state.yieldName('unrealHeader');
     this._state.fixAscii(4);
-    this._state.fixInt32(1); // save game file version
-    this._state.fixInt32(1); // package file version
-    // engine version block (major, minor, patch, changelist)
-    this._state.fixUint16(3);
+    this._state.yieldName('unrealVersion');
     this._state.fixInt32(1);
-    this._state.fieldString(); // engine branch
-    this._state.fixInt32(1); // custom version format
-    this._state.fixInt32(1); // custom version count — custom versions follow
+    this._state.yieldName('packageVersion');
+    this._state.fixInt32(1);
+    this._state.yieldName('majorVersion');
+    this._state.fixUint16(1);
+    this._state.yieldName('minorVersion');
+    this._state.fixUint16(1);
+    this._state.yieldName('patchVersion');
+    this._state.fixUint16(1);
+    this._state.yieldName('changelistVersion');
+    this._state.fixInt32(1);
+    this._state.yieldName('engineBranch');
+    this._state.fieldString();
+    this._state.yieldName('customVersionFormat');
+    this._state.fixInt32(1);
+    this._state.yieldName('customVersionCount');
+    this._state.fixInt32(1);
+    this._state.openArray('customVersions');
   }
 
   public next(): DecodeStepRow {
     const opcode = this._state.decode();
 
     switch (opcode) {
+      case Opcode.YieldName:
+        return { kind: 'yieldName', name: this.readProgramName() };
+      case Opcode.OpenStruct:
+        return { kind: 'openStruct', name: this.readProgramName() };
+      case Opcode.OpenArray:
+        return { kind: 'openArray', name: this.readProgramName() };
+      case Opcode.OpenMap:
+        return { kind: 'openMap', name: this.readProgramName() };
+      case Opcode.Close:
+        return { kind: 'close' };
+      case Opcode.PropNone:
+        return { kind: 'propNone' };
       case Opcode.DummyI32: {
         const start = this._reader.position;
         const value = this._reader.readInt32();
-        return {
-          opcode: OPCODE_NAMES[opcode],
-          args: '',
-          value,
-          bytes: this.hexFromPosition(start),
-        };
+        return this.readStep(Opcode.DummyI32, '', value, start);
       }
       case Opcode.FixAscii: {
         const len = this._state.int16();
         const start = this._reader.position;
         const value = this._reader.readASCII(len);
-        return {
-          opcode: OPCODE_NAMES[opcode],
-          args: String(len),
-          value,
-          bytes: this.hexFromPosition(start),
-        };
+        return this.readStep(opcode, String(len), value, start);
       }
       case Opcode.FixInt32: {
         const count = this._state.int16();
@@ -79,12 +93,7 @@ export class StreamDecoder {
         const value = count === 1
           ? this._reader.readInt32()
           : this.readInt32Batch(count);
-        return {
-          opcode: OPCODE_NAMES[opcode],
-          args: String(count),
-          value,
-          bytes: this.hexFromPosition(start),
-        };
+        return this.readStep(opcode, String(count), value, start);
       }
       case Opcode.FixUint16: {
         const count = this._state.int16();
@@ -92,26 +101,37 @@ export class StreamDecoder {
         const value = count === 1
           ? this._reader.readUint16()
           : this.readUint16Batch(count);
-        return {
-          opcode: OPCODE_NAMES[opcode],
-          args: String(count),
-          value,
-          bytes: this.hexFromPosition(start),
-        };
+        return this.readStep(opcode, String(count), value, start);
       }
       case Opcode.FieldString: {
         const start = this._reader.position;
         const value = this._reader.readString();
-        return {
-          opcode: OPCODE_NAMES[opcode],
-          args: '',
-          value,
-          bytes: this.hexFromPosition(start),
-        };
+        return this.readStep(opcode, '', value, start);
       }
       default:
         throw new Error(`Unknown opcode identifier ${opcode}`);
     }
+  }
+
+  private readProgramName(): string {
+    const len = this._state.int16();
+    return this._state.ascii(len);
+  }
+
+  private readStep(
+    opcode: Opcode,
+    args: string,
+    value: DecodeValue,
+    start: number,
+  ): Extract<DecodeStepRow, { kind: 'read' }> {
+
+    return {
+      kind: 'read',
+      opcode: OPCODE_NAMES[opcode],
+      args,
+      value,
+      bytes: this.hexFromPosition(start),
+    };
   }
 
   private readInt32Batch(count: number): number[] {

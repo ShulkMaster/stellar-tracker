@@ -75,6 +75,36 @@ export class RingBuffer {
     this.pushByte(Opcode.FieldString);
   }
 
+  public yieldName(name: string): void {
+    this.pushNamedOpcode(Opcode.YieldName, name);
+  }
+
+  public openStruct(name: string): void {
+    this.pushNamedOpcode(Opcode.OpenStruct, name);
+  }
+
+  public openArray(name: string): void {
+    this.pushNamedOpcode(Opcode.OpenArray, name);
+  }
+
+  public openMap(name: string): void {
+    this.pushNamedOpcode(Opcode.OpenMap, name);
+  }
+
+  public close(): void {
+    this.pushByte(Opcode.Close);
+  }
+
+  public propNone(): void {
+    this.pushByte(Opcode.PropNone);
+  }
+
+  private pushNamedOpcode(op: Opcode, name: string): void {
+    this.pushByte(op);
+    this.pushInt16(name.length);
+    this.pushAscii(name, name.length);
+  }
+
   public pushByte(value: number): void {
     this.ensureFree(1);
     this._buffer[this._tail & this._mask] = value & 0xff;
