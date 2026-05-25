@@ -76,11 +76,6 @@ export class StreamDecoder {
         return { kind: 'close' };
       case Opcode.PropNone:
         return { kind: 'propNone' };
-      case Opcode.DummyI32: {
-        const start = this._reader.position;
-        const value = this._reader.readInt32();
-        return this.readStep(Opcode.DummyI32, '', value, start);
-      }
       case Opcode.FixAscii: {
         const len = this._state.int16();
         const start = this._reader.position;

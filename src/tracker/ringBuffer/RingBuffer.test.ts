@@ -74,12 +74,13 @@ describe('RingBuffer encode/decode', () => {
     expect(buffer.ascii(3)).toBe('ABC');
   });
 
-  it('round-trips DummyI32 opcode with int32 argument', () => {
-    const buffer = RingBuffer.create(16);
-    buffer.pushDummyI32(0xdeadbeef);
+  it('round-trips YieldName opcode with name argument', () => {
+    const buffer = RingBuffer.create(32);
+    buffer.yieldName('stelarHeader');
 
-    expect(buffer.decode()).toBe(Opcode.DummyI32);
-    expect(buffer.int32()).toBe(0xdeadbeef | 0);
+    expect(buffer.decode()).toBe(Opcode.YieldName);
+    expect(buffer.int16()).toBe(12);
+    expect(buffer.ascii(12)).toBe('stelarHeader');
     expect(buffer.available).toBe(0);
   });
 });
@@ -149,7 +150,7 @@ describe('RingBuffer memory stability', () => {
     const initialRef = buffer.backingBufferRef();
 
     for (let i = 0; i < 10_000; i++) {
-      buffer.pushDummyI32(i);
+      buffer.fixInt32(1);
       buffer.pushByte(i & 0xff);
       buffer.pushBool(i % 2 === 0);
       buffer.pushInt16(i);
@@ -159,8 +160,8 @@ describe('RingBuffer memory stability', () => {
       expect(buffer.capacity).toBe(16);
       expect(buffer.bufferByteLength).toBe(16);
 
-      expect(buffer.decode()).toBe(Opcode.DummyI32);
-      expect(buffer.int32()).toBe(i);
+      expect(buffer.decode()).toBe(Opcode.FixInt32);
+      expect(buffer.int16()).toBe(1);
       expect(buffer.byte()).toBe(i & 0xff);
       expect(buffer.bool()).toBe(i % 2 === 0);
       expect(buffer.int16()).toBe(i);

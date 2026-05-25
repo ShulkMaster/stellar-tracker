@@ -141,11 +141,6 @@ export class RingBuffer {
     }
   }
 
-  public pushDummyI32(value: number): void {
-    this.pushByte(Opcode.DummyI32);
-    this.pushInt32(value);
-  }
-
   public decode(): Opcode {
     return this.byte() as Opcode;
   }
