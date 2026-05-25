@@ -7,6 +7,21 @@ export interface DataRow {
 
 export type DecodeValue = string | number | number[] | bigint | boolean;
 
+export type TagHeaderField =
+  | 'name'
+  | 'type'
+  | 'size'
+  | 'arrayIndex'
+  | 'guidFlag'
+  | 'guid'
+  | 'structType'
+  | 'structGuid'
+  | 'enumName'
+  | 'boolVal'
+  | 'itemType'
+  | 'keyType'
+  | 'valueType';
+
 export type DecodeStepRow =
   | {
       kind: 'read';
@@ -16,6 +31,13 @@ export type DecodeStepRow =
       bytes: string;
       index?: number;
     }
+  | {
+      kind: 'tagHeader';
+      field: TagHeaderField;
+      value: DecodeValue;
+      bytes: string;
+    }
+  | { kind: 'control'; label: string; detail?: string }
   | { kind: 'yieldName'; name: string; index?: number }
   | { kind: 'openStruct'; name: string; index?: number }
   | { kind: 'openArray'; name: string; count?: number }
@@ -25,4 +47,10 @@ export type DecodeStepRow =
 
 export function isReadStep(row: DecodeStepRow): row is Extract<DecodeStepRow, { kind: 'read' }> {
   return row.kind === 'read';
+}
+
+export function isTagHeaderStep(
+  row: DecodeStepRow,
+): row is Extract<DecodeStepRow, { kind: 'tagHeader' }> {
+  return row.kind === 'tagHeader';
 }

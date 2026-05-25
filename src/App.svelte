@@ -2,8 +2,7 @@
   import { onMount } from 'svelte';
   import DataTable from './components/DataTable.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
-  import { BinaryReader } from './tracker/binaryReader/BinaryReader';
-  import { StreamDecoder } from './tracker/streamDecoder/StreamDecoder';
+  import { BinaryReader, StreamDecoder } from 'tracker';
   import type { DecodeStepRow } from './types/table';
 
   let decoder = $state<StreamDecoder | null>(null);

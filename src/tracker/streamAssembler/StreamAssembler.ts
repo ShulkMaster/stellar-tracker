@@ -1,6 +1,6 @@
-import type { SaveHeader } from '../../types/safeFile.ts';
-import type { DecodeStepRow, DecodeValue } from '../../types/table.ts';
-import { StreamDecoder } from '../streamDecoder/StreamDecoder.ts';
+import type { SaveHeader } from 'types/safeFile';
+import type { DecodeStepRow, DecodeValue } from 'types/table';
+import { StreamDecoder } from 'tracker/streamDecoder/StreamDecoder';
 
 type Container = Record<string, unknown> | unknown[];
 
@@ -44,6 +44,10 @@ export class StreamAssembler {
         break;
       case 'read':
         this.assignValue(step.value);
+        break;
+      case 'tagHeader':
+      case 'control':
+        // Lifecycle / debug-only events: surfaced to the UI, not assembled.
         break;
       case 'openStruct': {
         const container: Record<string, unknown> = {};

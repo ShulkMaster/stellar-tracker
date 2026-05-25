@@ -1,6 +1,5 @@
 <script lang="ts">
-  import type { DecodeStepRow } from '../types/table';
-  import { isReadStep } from '../types/table';
+  import type { DecodeStepRow } from 'types/table';
 
   interface Props {
     rows: DecodeStepRow[];
@@ -23,6 +22,10 @@
     switch (row.kind) {
       case 'read':
         return row.opcode;
+      case 'tagHeader':
+        return 'TagHeader';
+      case 'control':
+        return row.label;
       case 'yieldName':
         return 'YieldName';
       case 'openStruct':
@@ -42,6 +45,10 @@
     switch (row.kind) {
       case 'read':
         return row.index !== undefined ? `${row.args} [${row.index}]` : row.args;
+      case 'tagHeader':
+        return row.field;
+      case 'control':
+        return row.detail ?? '';
       case 'yieldName':
         return row.index !== undefined ? `${row.name} [${row.index}]` : row.name;
       case 'openStruct':
@@ -58,13 +65,20 @@
   }
 
   function formatValue(row: DecodeStepRow): string {
-    if (!isReadStep(row)) {
-      return '—';
+    if (row.kind === 'read' || row.kind === 'tagHeader') {
+      if (Array.isArray(row.value)) {
+        return row.value.join(', ');
+      }
+      return String(row.value);
     }
-    if (Array.isArray(row.value)) {
-      return row.value.join(', ');
+    return '—';
+  }
+
+  function rowBytes(row: DecodeStepRow): string {
+    if (row.kind === 'read' || row.kind === 'tagHeader') {
+      return row.bytes;
     }
-    return String(row.value);
+    return '—';
   }
 
   function opcodeClass(row: DecodeStepRow): string {
@@ -80,6 +94,10 @@
           default:
             return 'opcode--default';
         }
+      case 'tagHeader':
+        return 'opcode--meta';
+      case 'control':
+        return 'opcode--control';
       case 'yieldName':
         return 'opcode--name';
       case 'openStruct':
@@ -122,7 +140,7 @@
                 <span class="value-text">{formatValue(row)}</span>
               </td>
               <td class="col-bytes">
-                <code class="byte-hex">{isReadStep(row) ? row.bytes : '—'}</code>
+                <code class="byte-hex">{rowBytes(row)}</code>
               </td>
             </tr>
           {/each}
@@ -154,7 +172,7 @@
     gap: 0.5rem;
     flex: 1;
     min-height: 0;
-    max-height: calc(100dvh - 15rem);
+    max-height: 900px;
   }
 
   .table-shell {
@@ -278,6 +296,12 @@
     background: rgba(248, 81, 73, 0.12);
     border-color: rgba(248, 81, 73, 0.3);
     color: #ff7b72;
+  }
+
+  .opcode--meta {
+    background: rgba(139, 148, 158, 0.1);
+    border-color: rgba(139, 148, 158, 0.25);
+    color: var(--st-text-subtle);
   }
 
   .mono {

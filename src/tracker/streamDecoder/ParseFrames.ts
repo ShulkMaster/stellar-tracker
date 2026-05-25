@@ -1,35 +1,27 @@
-import { Opcode } from '../ringBuffer/Opcodes.ts';
-
-/** Describes one field inside a struct element of an array. */
-export type FieldSpec = {
-  name: string;
-  opcode: Opcode;
-  /** Optional count argument for batchable opcodes (e.g. FixInt32). Defaults to 1. */
-  args?: number;
-};
-
-/** Decoder-side frame stack: tracks array iteration and per-element field walk. */
-export type ParseFrame =
-  | {
-      kind: 'array';
-      name: string;
-      count: number;
-      index: number;
-      item: readonly FieldSpec[];
-    }
-  | {
-      kind: 'struct';
-      arrayIndex: number;
-      fields: readonly FieldSpec[];
-      fieldIndex: number;
-      /** Tracks the openStruct → yieldName → read sub-step within a single field. */
-      phase: 'yieldName' | 'read';
-    };
-
-/** Schemas keyed by header array name. */
-export const ARRAY_SCHEMAS: Record<string, readonly FieldSpec[]> = {
-  customVersions: [
-    { name: 'guid', opcode: Opcode.FieldGuid },
-    { name: 'version', opcode: Opcode.FixInt32, args: 1 },
-  ],
+/**
+ * Decoder-side frame stack: the body's property-tag loop is opcode-driven and
+ * does not need frames. The only remaining frame use-case is the header's
+ * `customVersions` array iteration, whose item layout (GUID + Int32) is
+ * hardcoded inside `StreamDecoder` rather than looked up from a schema.
+ */
+export type ParseFrame = {
+  kind: 'customVersions';
+  count: number;
+  index: number;
+  /**
+   * Sub-step within a single element iteration.
+   *   open       — emit OpenStruct
+   *   guidName   — emit YieldName 'guid'
+   *   guid       — read FieldGuid value
+   *   versionName — emit YieldName 'version'
+   *   version    — read FixInt32 value
+   *   close      — emit Close, advance index
+   */
+  phase:
+    | 'open'
+    | 'guidName'
+    | 'guid'
+    | 'versionName'
+    | 'version'
+    | 'close';
 };

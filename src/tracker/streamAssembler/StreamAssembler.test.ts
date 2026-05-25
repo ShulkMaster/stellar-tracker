@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { BinaryReader } from '../binaryReader/BinaryReader.ts';
-import { StreamDecoder } from '../streamDecoder/StreamDecoder.ts';
-import { EXPECTED_HEADER } from '../streamDecoder/headerFixture.ts';
-import { loadHeaderThroughSaveClass } from '../streamDecoder/loadHeaderFixture.ts';
-import { StreamAssembler } from './StreamAssembler.ts';
-import type { DecodeStepRow } from '../../types/table.ts';
+import { BinaryReader, StreamAssembler, StreamDecoder } from 'tracker';
+import {
+  EXPECTED_HEADER,
+  HEADER_THROUGH_SAVE_CLASS_BYTES,
+  loadHeaderThroughSaveClass,
+  FIRST_BODY_PROPERTY,
+  EXPECTED_NEW_GAME_CREATE_TIME,
+} from 'tracker/streamDecoder/fixtures';
+import type { DecodeStepRow } from 'types/table';
 
 describe('StreamAssembler', () => {
   it('assembles the parsed GVAS header from decoder steps', () => {
@@ -14,8 +17,24 @@ describe('StreamAssembler', () => {
     const header = assembler.parseHeader();
 
     expect(header).toEqual(EXPECTED_HEADER);
-    expect(decoder.position).toBe(1207);
+    expect(decoder.position).toBe(HEADER_THROUGH_SAVE_CLASS_BYTES);
     expect(decoder.canStep).toBe(false);
+  });
+
+  it('assembles NewGameCreateTime as the first body property', () => {
+    const headerBytes = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(headerBytes.length + FIRST_BODY_PROPERTY.length);
+    buffer.set(headerBytes, 0);
+    buffer.set(FIRST_BODY_PROPERTY, headerBytes.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    const header = assembler.parseHeader();
+    const body = (header as unknown as { body?: Record<string, unknown> }).body;
+
+    expect(body).toBeDefined();
+    expect(body!.NewGameCreateTime).toBe(EXPECTED_NEW_GAME_CREATE_TIME);
   });
 
   it('pushes struct entries into an open array', () => {
