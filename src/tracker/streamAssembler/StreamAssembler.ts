@@ -47,7 +47,12 @@ export class StreamAssembler {
         break;
       case 'openStruct': {
         const container: Record<string, unknown> = {};
-        this.assignContainer(step.name, container);
+        const target = this.currentTarget();
+        if (Array.isArray(target)) {
+          target.push(container);
+        } else {
+          this.assignContainer(step.name, container);
+        }
         this._stack.push(container);
         break;
       }

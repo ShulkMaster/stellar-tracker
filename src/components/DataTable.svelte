@@ -41,12 +41,17 @@
   function stepArgs(row: DecodeStepRow): string {
     switch (row.kind) {
       case 'read':
-        return row.args;
+        return row.index !== undefined ? `${row.args} [${row.index}]` : row.args;
       case 'yieldName':
+        return row.index !== undefined ? `${row.name} [${row.index}]` : row.name;
       case 'openStruct':
+        return row.index !== undefined ? `${row.name} [${row.index}]` : row.name;
       case 'openArray':
+        return row.count !== undefined ? `${row.name} ×${row.count}` : row.name;
       case 'openMap':
         return row.name;
+      case 'close':
+        return row.index !== undefined ? `[${row.index}]` : '';
       default:
         return '';
     }

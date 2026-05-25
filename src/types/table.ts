@@ -14,12 +14,13 @@ export type DecodeStepRow =
       args: string;
       value: DecodeValue;
       bytes: string;
+      index?: number;
     }
-  | { kind: 'yieldName'; name: string }
-  | { kind: 'openStruct'; name: string }
-  | { kind: 'openArray'; name: string }
+  | { kind: 'yieldName'; name: string; index?: number }
+  | { kind: 'openStruct'; name: string; index?: number }
+  | { kind: 'openArray'; name: string; count?: number }
   | { kind: 'openMap'; name: string }
-  | { kind: 'close' }
+  | { kind: 'close'; index?: number }
   | { kind: 'propNone' };
 
 export function isReadStep(row: DecodeStepRow): row is Extract<DecodeStepRow, { kind: 'read' }> {

@@ -108,34 +108,36 @@ function formatStep(s: LoggedStep): string {
   const row = s.row;
   const pos =
     `@0x${hex(s.positionBefore, 6)}..0x${hex(s.positionAfter, 6)}`;
+  const head = `#${String(s.index).padStart(5, '0')} ${pos}`;
+  const idx = (n: number | undefined): string => (n === undefined ? '' : ` [${n}]`);
 
   if (row.kind === 'yieldName') {
-    return `#${String(s.index).padStart(5, '0')} ${pos} YieldName    name=${row.name}`;
+    return `${head} YieldName    name=${row.name}${idx(row.index)}`;
   }
   if (row.kind === 'openStruct') {
-    return `#${String(s.index).padStart(5, '0')} ${pos} OpenStruct   name=${row.name}`;
+    return `${head} OpenStruct   name=${row.name}${idx(row.index)}`;
   }
   if (row.kind === 'openArray') {
-    return `#${String(s.index).padStart(5, '0')} ${pos} OpenArray    name=${row.name}`;
+    const count = row.count !== undefined ? ` count=${row.count}` : '';
+    return `${head} OpenArray    name=${row.name}${count}`;
   }
   if (row.kind === 'openMap') {
-    return `#${String(s.index).padStart(5, '0')} ${pos} OpenMap      name=${row.name}`;
+    return `${head} OpenMap      name=${row.name}`;
   }
   if (row.kind === 'close') {
-    return `#${String(s.index).padStart(5, '0')} ${pos} Close`;
+    return `${head} Close${idx(row.index)}`;
   }
   if (row.kind === 'propNone') {
-    return `#${String(s.index).padStart(5, '0')} ${pos} PropNone`;
+    return `${head} PropNone`;
   }
 
   const val = JSON.stringify(row.value);
   const valTrunc = val.length > 48 ? `${val.slice(0, 45)}...` : val;
   return (
-    `#${String(s.index).padStart(5, '0')} ` +
-    `${pos} ` +
+    `${head} ` +
     `${row.opcode.padEnd(10)} args=${String(row.args).padEnd(4)} ` +
     `bytes=[${row.bytes}]`.padEnd(48) +
-    ` value=${valTrunc}`
+    ` value=${valTrunc}${idx(row.index)}`
   );
 }
 

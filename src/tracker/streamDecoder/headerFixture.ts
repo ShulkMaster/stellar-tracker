@@ -1,3 +1,5 @@
+import { EXPECTED_CUSTOM_VERSIONS } from './customVersionsExpected.ts';
+
 // SBS00.sav bytes 0x00–0x3C: GVAS header through customVersionCount (61 B).
 export const HEADER_PREFIX = new Uint8Array([
   0x45, 0x56, 0x41, 0x53, // "EVAS"
@@ -14,6 +16,8 @@ export const HEADER_PREFIX = new Uint8Array([
   0x38, 0x00, 0x00, 0x00, // customVersionCount 56
 ]);
 
+export const HEADER_THROUGH_SAVE_CLASS_BYTES = 1207;
+
 export const EXPECTED_HEADER = {
   stelarHeader: 'EVAS',
   stelarVersion: 1,
@@ -27,6 +31,6 @@ export const EXPECTED_HEADER = {
   engineBranch: '++UE4+Release-4.26',
   customVersionFormat: 3,
   customVersionCount: 56,
-  customVersions: [] as unknown[],
-  saveClassName: '',
+  customVersions: EXPECTED_CUSTOM_VERSIONS,
+  saveClassName: '/Script/SB.SBSaveGame',
 };
