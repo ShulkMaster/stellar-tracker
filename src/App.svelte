@@ -94,7 +94,9 @@
 
 <style>
   .app {
-    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
     background:
       radial-gradient(ellipse 80% 50% at 50% -20%, rgba(88, 166, 255, 0.08), transparent),
       var(--st-bg);
@@ -195,12 +197,17 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
   }
 
   .steps-section {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    flex: 1;
+    min-height: 0;
   }
 
   .section-header {

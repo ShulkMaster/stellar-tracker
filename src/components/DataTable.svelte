@@ -8,23 +8,16 @@
 
   let { rows = [] }: Props = $props();
 
-  const pageSize = 100;
-  let currentPage = $state(1);
-
-  let totalPages = $derived(Math.ceil(rows.length / pageSize) || 1);
-  let startIndex = $derived((currentPage - 1) * pageSize);
-  let endIndex = $derived(Math.min(startIndex + pageSize, rows.length));
-  let displayedRows = $derived(rows.slice(startIndex, endIndex));
+  let scrollEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
-    if (rows.length > 0) {
-      currentPage = totalPages;
-    }
-  });
+    const count = rows.length;
+    if (count === 0 || scrollEl === null) return;
 
-  function goToPage(page: number) {
-    currentPage = Math.max(1, Math.min(page, totalPages));
-  }
+    requestAnimationFrame(() => {
+      scrollEl!.scrollTop = scrollEl!.scrollHeight;
+    });
+  });
 
   function stepLabel(row: DecodeStepRow): string {
     switch (row.kind) {
@@ -79,8 +72,6 @@
           case 'FixInt32':
           case 'FixUint16':
             return 'opcode--int32';
-          case 'DummyI32':
-            return 'opcode--dummy';
           default:
             return 'opcode--default';
         }
@@ -99,84 +90,55 @@
 
 <div class="data-table-wrapper">
   <div class="table-shell">
-    <table class="table table-hover align-middle mb-0">
-      <thead>
-        <tr>
-          <th scope="col" class="col-idx">#</th>
-          <th scope="col" class="col-opcode">Opcode</th>
-          <th scope="col" class="col-args">Args</th>
-          <th scope="col" class="col-value">Value</th>
-          <th scope="col" class="col-bytes">Bytes</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each displayedRows as row, i (startIndex + i)}
-          <tr class="step-row">
-            <td class="col-idx">
-              <span class="row-idx">{startIndex + i + 1}</span>
-            </td>
-            <td class="col-opcode">
-              <span class="opcode {opcodeClass(row)}">{stepLabel(row)}</span>
-            </td>
-            <td class="col-args">
-              <span class="mono muted">{stepArgs(row) || '—'}</span>
-            </td>
-            <td class="col-value">
-              <span class="value-text">{formatValue(row)}</span>
-            </td>
-            <td class="col-bytes">
-              <code class="byte-hex">{isReadStep(row) ? row.bytes : '—'}</code>
-            </td>
+    <div class="table-scroll" bind:this={scrollEl}>
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th scope="col" class="col-idx">#</th>
+            <th scope="col" class="col-opcode">Opcode</th>
+            <th scope="col" class="col-args">Args</th>
+            <th scope="col" class="col-value">Value</th>
+            <th scope="col" class="col-bytes">Bytes</th>
           </tr>
-        {/each}
-        {#if rows.length === 0}
-          <tr class="empty-row">
-            <td colspan="5">
-              <div class="empty-state">
-                <span class="empty-icon" aria-hidden="true">⬡</span>
-                <p class="empty-title">No decode steps yet</p>
-                <p class="empty-hint">Load a save file, then click <strong>Next</strong> to decode one opcode at a time.</p>
-              </div>
-            </td>
-          </tr>
-        {/if}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each rows as row, i (i)}
+            <tr class="step-row">
+              <td class="col-idx">
+                <span class="row-idx">{i + 1}</span>
+              </td>
+              <td class="col-opcode">
+                <span class="opcode {opcodeClass(row)}">{stepLabel(row)}</span>
+              </td>
+              <td class="col-args">
+                <span class="mono muted">{stepArgs(row) || '—'}</span>
+              </td>
+              <td class="col-value">
+                <span class="value-text">{formatValue(row)}</span>
+              </td>
+              <td class="col-bytes">
+                <code class="byte-hex">{isReadStep(row) ? row.bytes : '—'}</code>
+              </td>
+            </tr>
+          {/each}
+          {#if rows.length === 0}
+            <tr class="empty-row">
+              <td colspan="5">
+                <div class="empty-state">
+                  <span class="empty-icon" aria-hidden="true">⬡</span>
+                  <p class="empty-title">No decode steps yet</p>
+                  <p class="empty-hint">Load a save file, then click <strong>Next</strong> to decode one opcode at a time.</p>
+                </div>
+              </td>
+            </tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
   </div>
 
-  {#if totalPages > 1}
-    <nav aria-label="Table pagination" class="pagination-nav">
-      <ul class="pagination pagination-sm justify-content-center flex-wrap mb-0">
-        <li class="page-item" class:disabled={currentPage === 1}>
-          <button class="page-link" onclick={() => goToPage(1)} title="First Page">««</button>
-        </li>
-        <li class="page-item" class:disabled={currentPage === 1}>
-          <button class="page-link" onclick={() => goToPage(currentPage - 1)} title="Previous Page">«</button>
-        </li>
-
-        {#each Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-          if (totalPages <= 7) return i + 1;
-          let start = Math.max(1, currentPage - 3);
-          let end = Math.min(totalPages, start + 6);
-          if (end === totalPages) start = Math.max(1, end - 6);
-          return start + i;
-        }) as p}
-          <li class="page-item" class:active={currentPage === p}>
-            <button class="page-link" onclick={() => goToPage(p)}>{p}</button>
-          </li>
-        {/each}
-
-        <li class="page-item" class:disabled={currentPage === totalPages}>
-          <button class="page-link" onclick={() => goToPage(currentPage + 1)} title="Next Page">»</button>
-        </li>
-        <li class="page-item" class:disabled={currentPage === totalPages}>
-          <button class="page-link" onclick={() => goToPage(totalPages)} title="Last Page">»»</button>
-        </li>
-      </ul>
-      <p class="pagination-meta">
-        Page {currentPage} of {totalPages} · items {startIndex + 1}–{endIndex} of {rows.length}
-      </p>
-    </nav>
+  {#if rows.length > 0}
+    <p class="table-meta">{rows.length} step{rows.length === 1 ? '' : 's'}</p>
   {/if}
 </div>
 
@@ -184,15 +146,29 @@
   .data-table-wrapper {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    flex: 1;
+    min-height: 0;
+    max-height: calc(100dvh - 15rem);
   }
 
   .table-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
     background: var(--st-bg-elevated);
     border: 1px solid var(--st-border);
     border-radius: var(--st-radius);
-    overflow: hidden;
     box-shadow: var(--st-shadow);
+    overflow: hidden;
+  }
+
+  .table-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
   }
 
   .table {
@@ -201,6 +177,9 @@
   }
 
   thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background: var(--st-bg-surface);
     color: var(--st-text-subtle);
     font-size: 0.7rem;
@@ -210,6 +189,7 @@
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--st-border);
     white-space: nowrap;
+    box-shadow: 0 1px 0 var(--st-border);
   }
 
   tbody td {
@@ -269,12 +249,6 @@
     background: rgba(88, 166, 255, 0.12);
     border-color: rgba(88, 166, 255, 0.3);
     color: #79c0ff;
-  }
-
-  .opcode--dummy {
-    background: rgba(210, 153, 34, 0.12);
-    border-color: rgba(210, 153, 34, 0.3);
-    color: #e3b341;
   }
 
   .opcode--default {
@@ -369,17 +343,11 @@
     font-weight: 600;
   }
 
-  .pagination-nav {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .pagination-meta {
+  .table-meta {
     margin: 0;
     font-size: 0.75rem;
     color: var(--st-text-subtle);
     font-family: var(--st-mono);
+    text-align: right;
   }
 </style>
