@@ -1,0 +1,48 @@
+---
+description: Import path conventions for Stellar Tracker
+globs: "**/*.{ts,svelte}"
+alwaysApply: false
+---
+
+# Import Paths
+
+## BaseUrl
+
+`baseUrl` is `src/` (see [tsconfig.json](mdc:tsconfig.json)). Vite and Vitest resolve baseUrl-style specifiers via `vite-tsconfig-paths` (registered in [vite.config.ts](mdc:vite.config.ts) and [vite.re.config.ts](mdc:vite.re.config.ts)).
+
+Top-level folders under `src/` are usable as bare specifiers:
+
+- `tracker/...`
+- `types/...`
+- `components/...`
+
+## Rules
+
+- Use a baseUrl absolute import whenever the alternative would climb two or more levels (`../../`, `../../../`, ...). Single-level relative (`./Sibling`, `./child/...`) stays as-is.
+- Never include the `.ts` or `.svelte` extension in import specifiers. `moduleResolution: "bundler"` resolves them, and bundling them in is incompatible with Svelte's `<script lang="ts">`.
+- Use `import type { ... }` for type-only imports.
+
+## Examples
+
+Bad:
+
+```ts
+import { BinaryReader } from '../../tracker/binaryReader/BinaryReader.ts';
+import type { DataRow } from '../../types/table.ts';
+import DataTable from '../components/DataTable.svelte';
+```
+
+Good:
+
+```ts
+import { BinaryReader } from 'tracker/binaryReader/BinaryReader';
+import type { DataRow } from 'types/table';
+import DataTable from 'components/DataTable.svelte';
+```
+
+Sibling imports stay relative:
+
+```ts
+import { Opcode } from './Opcodes';
+import { RingBuffer } from './RingBuffer';
+```

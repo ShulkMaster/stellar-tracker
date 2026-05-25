@@ -24,8 +24,7 @@ alwaysApply: false
 
 ## Imports
 
-- Path alias: `tracker/` (see `vite.config.ts` / `tsconfig`).
-- Type-only imports: `import type { ... }`.
+See `import-paths.mdc` for the full convention (baseUrl `src/`, no `.ts`/`.svelte` extensions, no `../../` chains).
 
 ## Platform
 

@@ -25,9 +25,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
-import type { DataRow, DecodeStepRow } from './src/types/table.ts';
-import { BinaryReader } from './src/tracker/binaryReader/BinaryReader.ts';
-import { StreamDecoder } from './src/tracker/streamDecoder/StreamDecoder.ts';
+import type { DataRow, DecodeStepRow } from 'types/table';
+import { BinaryReader, StreamDecoder } from 'tracker';
 
 type Args = {
   file: string;
@@ -129,6 +128,20 @@ function formatStep(s: LoggedStep): string {
   }
   if (row.kind === 'propNone') {
     return `${head} PropNone`;
+  }
+  if (row.kind === 'tagHeader') {
+    const val = JSON.stringify(row.value);
+    const valTrunc = val.length > 48 ? `${val.slice(0, 45)}...` : val;
+    return (
+      `${head} ` +
+      `TagHeader   field=${row.field.padEnd(12)} ` +
+      `bytes=[${row.bytes}]`.padEnd(36) +
+      ` value=${valTrunc}`
+    );
+  }
+  if (row.kind === 'control') {
+    const detail = row.detail !== undefined ? ` (${row.detail})` : '';
+    return `${head} Control      ${row.label}${detail}`;
   }
 
   const val = JSON.stringify(row.value);

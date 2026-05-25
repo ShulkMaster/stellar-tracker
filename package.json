@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "re": "node --experimental-transform-types --no-warnings=ExperimentalWarning re.ts"
+    "re": "vite build --config vite.re.config.ts && node dist-re/re.js"
   },
   "dependencies": {
     "@popperjs/core": "^2.11.8",
