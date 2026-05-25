@@ -75,6 +75,10 @@ export class RingBuffer {
     this.pushByte(Opcode.FieldString);
   }
 
+  public fieldGuid(): void {
+    this.pushByte(Opcode.FieldGuid);
+  }
+
   public yieldName(name: string): void {
     this.pushNamedOpcode(Opcode.YieldName, name);
   }

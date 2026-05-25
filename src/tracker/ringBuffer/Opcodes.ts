@@ -30,6 +30,8 @@ export const enum Opcode {
   Close = 8,
   /** GVAS None property tag — pops the assembler stack. */
   PropNone = 9,
+  /** Reads a 16-byte Unreal GUID from the file. */
+  FieldGuid = 10,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -43,4 +45,5 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.OpenMap]: 'OpenMap',
   [Opcode.Close]: 'Close',
   [Opcode.PropNone]: 'PropNone',
+  [Opcode.FieldGuid]: 'FieldGuid',
 };
