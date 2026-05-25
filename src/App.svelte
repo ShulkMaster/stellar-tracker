@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import DataTable from './components/DataTable.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
   import { BinaryReader } from './tracker/binaryReader/BinaryReader';
@@ -9,10 +10,26 @@
   let tableRows = $state<DecodeStepRow[]>([]);
   let fileLoaded = $state(false);
   let isLoading = $state(false);
+  let position = $state(0);
+  let totalSize = $state(0);
+  let canAdvance = $state(false);
+  let isFinished = $state(false);
 
   let stepCount = $derived(tableRows.length);
-  let canAdvance = $derived(decoder?.canStep ?? false);
-  let isFinished = $derived(fileLoaded && decoder !== null && !decoder.canStep);
+
+  function syncDecoderState() {
+    if (decoder === null) {
+      position = 0;
+      totalSize = 0;
+      canAdvance = false;
+      isFinished = false;
+      return;
+    }
+    position = decoder.position;
+    totalSize = decoder.totalSize;
+    canAdvance = decoder.canStep;
+    isFinished = fileLoaded && !decoder.canStep;
+  }
 
   async function loadFile() {
     isLoading = true;
@@ -24,6 +41,7 @@
       decoder = new StreamDecoder(reader);
       tableRows = [];
       fileLoaded = true;
+      syncDecoderState();
     } catch (e: unknown) {
       console.error(e);
       alert(e instanceof Error ? e.message : String(e));
@@ -35,12 +53,30 @@
   function step() {
     if (!decoder?.canStep) return;
     tableRows = [...tableRows, decoder.next()];
+    syncDecoderState();
+  }
+
+  function stepToClose() {
+    if (!decoder?.canStep) return;
+    const collected: DecodeStepRow[] = [];
+    while (decoder.canStep) {
+      const row = decoder.next();
+      collected.push(row);
+      if (row.kind === 'close' || row.kind === 'propNone') break;
+    }
+    tableRows = [...tableRows, ...collected];
+    syncDecoderState();
   }
 
   function reset() {
     decoder?.reset();
     tableRows = [];
+    syncDecoderState();
   }
+
+  onMount(() => {
+    void loadFile();
+  });
 </script>
 
 <div class="app">
@@ -74,12 +110,13 @@
     <ControlPanel
       onLoad={loadFile}
       onStep={step}
+      onStepToClose={stepToClose}
       onReset={reset}
       canStep={fileLoaded}
       {isLoading}
       isEOF={isFinished}
-      position={decoder?.position ?? 0}
-      totalSize={decoder?.totalSize ?? 0}
+      {position}
+      {totalSize}
     />
 
     <section class="steps-section">

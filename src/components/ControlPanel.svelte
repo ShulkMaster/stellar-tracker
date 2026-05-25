@@ -2,6 +2,7 @@
   interface Props {
     onLoad: () => void;
     onStep: () => void;
+    onStepToClose: () => void;
     onReset: () => void;
     canStep: boolean;
     isLoading: boolean;
@@ -13,6 +14,7 @@
   let {
     onLoad,
     onStep,
+    onStepToClose,
     onReset,
     canStep,
     isLoading,
@@ -59,6 +61,14 @@
           {:else}
             Next →
           {/if}
+        </button>
+        <button
+          class="btn btn-outline-success btn-action"
+          onclick={onStepToClose}
+          disabled={isEOF}
+          title="Step until the next Close or PropNone"
+        >
+          Next close ⤓
         </button>
         <button class="btn btn-outline-danger btn-action" onclick={onReset}>
           Reset
