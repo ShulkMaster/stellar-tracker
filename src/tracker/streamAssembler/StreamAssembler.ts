@@ -80,16 +80,20 @@ export class StreamAssembler {
   }
 
   private assignValue(value: DecodeValue): void {
+    const target = this.currentTarget();
+    if (Array.isArray(target)) {
+      // Array elements legitimately have no preceding YieldName (the array
+      // container is keyed once at OpenArray time; subsequent reads just
+      // append). Push and clear any stale pending name.
+      target.push(value);
+      this._pendingName = null;
+      return;
+    }
+
     if (this._pendingName === null) {
       throw new Error('Read step without a preceding YieldName');
     }
-
-    const target = this.currentTarget();
-    if (Array.isArray(target)) {
-      target.push(value);
-    } else {
-      target[this._pendingName] = value;
-    }
+    target[this._pendingName] = value;
     this._pendingName = null;
   }
 

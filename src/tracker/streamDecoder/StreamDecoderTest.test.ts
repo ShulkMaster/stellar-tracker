@@ -23,6 +23,13 @@ import {
   EXPECTED_GUID_HEX,
   EXPECTED_DATETIME_TICKS,
   EXPECTED_GENERIC_STRUCT,
+  PRIMITIVE_ARRAY_FIXTURE,
+  NAME_ARRAY_FIXTURE,
+  EMPTY_ARRAY_FIXTURE,
+  STRUCT_ARRAY_FIXTURE,
+  STRUCT_ARRAY_PAYLOAD_BYTES,
+  EXPECTED_LOCKID_VALUES,
+  EXPECTED_ITEM_QUICK_SLOT_VALUES,
 } from './fixtures';
 
 function decodeBody(fixtureBytes: Uint8Array): {
@@ -287,5 +294,135 @@ describe('StreamDecoder', () => {
     // `_listDepth` returned to baseline after the inner None.
     expect(decoder.canStep).toBe(false);
     expect(decoder.position).toBe(totalBytes);
+  });
+
+  // ───────────────────────── Phase 2 — scalar arrays ──────────────────────────
+
+  it('decodes a UInt32Property[7] ArrayProperty end-to-end with one read per element', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + PRIMITIVE_ARRAY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(PRIMITIVE_ARRAY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let openArrayName: string | null = null;
+    let itemCountTagHeader: number | null = null;
+    const intReads: number[] = [];
+    let sawCloseAfterIntReads = false;
+    let sawBodyTerminator = false;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'openArray' && step.name === 'Lockid') {
+        openArrayName = step.name;
+      } else if (step.kind === 'tagHeader' && step.field === 'itemCount') {
+        itemCountTagHeader = step.value as number;
+      } else if (
+        step.kind === 'read'
+        && step.opcode === 'FixInt32'
+        && openArrayName !== null
+        && intReads.length < EXPECTED_LOCKID_VALUES.length
+      ) {
+        intReads.push(step.value as number);
+      } else if (
+        step.kind === 'close'
+        && intReads.length === EXPECTED_LOCKID_VALUES.length
+        && !sawCloseAfterIntReads
+      ) {
+        sawCloseAfterIntReads = true;
+      } else if (step.kind === 'propNone') {
+        sawBodyTerminator = true;
+      }
+    }
+
+    expect(openArrayName).toBe('Lockid');
+    expect(itemCountTagHeader).toBe(EXPECTED_LOCKID_VALUES.length);
+    expect(intReads).toEqual([...EXPECTED_LOCKID_VALUES]);
+    expect(sawCloseAfterIntReads).toBe(true);
+    expect(sawBodyTerminator).toBe(true);
+    expect(decoder.position).toBe(buffer.length);
+
+    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    expect(body.Lockid).toEqual([...EXPECTED_LOCKID_VALUES]);
+  });
+
+  it('decodes a NameProperty[6] ArrayProperty including a literal "None" element without confusing the tag-name terminator', () => {
+    const { body, decoder, totalBytes } = decodeBody(NAME_ARRAY_FIXTURE);
+
+    expect(body.ItemQuickSlot).toEqual([...EXPECTED_ITEM_QUICK_SLOT_VALUES]);
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes an empty ArrayProperty (itemCount=0) without pushing an arrayIter frame', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + EMPTY_ARRAY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(EMPTY_ARRAY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let itemCount: number | null = null;
+    let openArraySeen = false;
+    let elementReadsAfterOpenArray = 0;
+    let closeAfterOpenArray = false;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'tagHeader' && step.field === 'itemCount') {
+        itemCount = step.value as number;
+      } else if (step.kind === 'openArray' && step.name === 'EmptyArr') {
+        openArraySeen = true;
+      } else if (step.kind === 'read' && openArraySeen && !closeAfterOpenArray) {
+        elementReadsAfterOpenArray += 1;
+      } else if (step.kind === 'close' && openArraySeen && !closeAfterOpenArray) {
+        closeAfterOpenArray = true;
+      }
+    }
+
+    expect(itemCount).toBe(0);
+    expect(openArraySeen).toBe(true);
+    expect(elementReadsAfterOpenArray).toBe(0);
+    expect(closeAfterOpenArray).toBe(true);
+    expect(decoder.position).toBe(buffer.length);
+
+    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    expect(body.EmptyArr).toEqual([]);
+  });
+
+  it('handles a StructProperty[N] ArrayProperty as an out-of-scope fallback that keeps the reader in sync', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + STRUCT_ARRAY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(STRUCT_ARRAY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let saw_skipBytes = false;
+    let skipBytesCount = 0;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'read' && step.opcode === 'SkipBytes') {
+        saw_skipBytes = true;
+        skipBytesCount += 1;
+      }
+    }
+
+    expect(saw_skipBytes).toBe(true);
+    expect(skipBytesCount).toBe(1);
+    expect(decoder.position).toBe(buffer.length);
+
+    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    const arr = body.StructArr;
+    expect(Array.isArray(arr)).toBe(true);
+    // Placeholder element from the SkipBytes read step lands inside the array.
+    expect((arr as unknown[]).length).toBe(1);
+    expect(typeof (arr as unknown[])[0]).toBe('string');
+    expect((arr as unknown[])[0]).toBe(`<skipped:${STRUCT_ARRAY_PAYLOAD_BYTES}>`);
   });
 });

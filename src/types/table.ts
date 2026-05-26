@@ -20,7 +20,8 @@ export type TagHeaderField =
   | 'boolVal'
   | 'itemType'
   | 'keyType'
-  | 'valueType';
+  | 'valueType'
+  | 'itemCount';
 
 export type DecodeStepRow =
   | {

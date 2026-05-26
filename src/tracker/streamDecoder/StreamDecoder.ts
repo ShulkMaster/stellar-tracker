@@ -26,6 +26,12 @@ type TagState = {
   itemType: string;
   keyType: string;
   valueType: string;
+  /**
+   * Element count for `ArrayProperty` Values. Populated by the `ArrayCount`
+   * opcode handler after reading the leading Int32; not part of the wire-side
+   * tag header. Reset by `makeEmptyTag()` between properties.
+   */
+  itemCount: number;
 };
 
 const NONE_TAG_NAME = 'None';
@@ -78,6 +84,7 @@ export class StreamDecoder {
     [Opcode.TagItemType]: () => this.handleTagItemType(),
     [Opcode.TagKeyType]: () => this.handleTagKeyType(),
     [Opcode.TagValueType]: () => this.handleTagValueType(),
+    [Opcode.ArrayCount]: () => this.handleArrayCount(),
   });
 
   constructor(reader: BinaryReader) {
@@ -123,8 +130,24 @@ export class StreamDecoder {
       itemType: '',
       keyType: '',
       valueType: '',
+      itemCount: 0,
     };
   }
+
+  /**
+   * Opcodes that count as one consumed `ArrayProperty` element when an
+   * `arrayIter` frame is on top of the stack. Must mirror the dispatch table
+   * in `enqueueArrayElement()`. Anything else (`OpenArray`, `Close`,
+   * `TagName`, ...) is ignored by the post-step hook.
+   */
+  private static readonly _arrayElementOpcodes: ReadonlySet<Opcode> = new Set([
+    Opcode.FixInt32,
+    Opcode.FieldInt64,
+    Opcode.FieldFloat32,
+    Opcode.FieldDouble64,
+    Opcode.FieldByte,
+    Opcode.FieldString,
+  ]);
 
   private initializeState(): void {
     this._state.yieldName('stelarHeader');
@@ -172,7 +195,35 @@ export class StreamDecoder {
       throw new Error(`Unknown opcode identifier ${opcode}`);
     }
 
-    return handler();
+    const row = handler();
+    this.advanceArrayIter(opcode);
+    return row;
+  }
+
+  /**
+   * Post-step hook for `ArrayProperty` iteration. Runs after every opcode
+   * handler. If the top frame is an `arrayIter` AND the just-executed opcode
+   * is one of the registered element opcodes, decrement the remaining counter
+   * and either re-enqueue the next element opcode or close out the array
+   * (`Close` + parent `TagName`). All other opcodes are no-ops here.
+   */
+  private advanceArrayIter(executed: Opcode): void {
+    const top = this._frames[this._frames.length - 1];
+    if (!top || top.kind !== 'arrayIter') {
+      return;
+    }
+    if (!StreamDecoder._arrayElementOpcodes.has(executed)) {
+      return;
+    }
+
+    top.remaining -= 1;
+    if (top.remaining > 0) {
+      this.enqueueArrayElement(top.itemType);
+    } else {
+      this._frames.pop();
+      this._state.close();
+      this._state.tagName();
+    }
   }
 
   /**
@@ -564,8 +615,12 @@ export class StreamDecoder {
         this._state.yieldName(propName);
         this.enqueueStructValueSequence(propName, this._tag.structType);
         return;
+      case 'ArrayProperty':
+        this._state.yieldName(propName);
+        this._state.arrayCount();
+        return;
       default:
-        // ArrayProperty, MapProperty, SetProperty, TextProperty, unknown:
+        // MapProperty, SetProperty, TextProperty, unknown:
         // emit the field with a placeholder and skip its `size` bytes.
         this._state.yieldName(propName);
         this._state.skipBytes(size);
@@ -644,6 +699,99 @@ export class StreamDecoder {
         this._listDepth++;
         this._state.tagName();
         return;
+    }
+  }
+
+  /**
+   * Reads the leading `Int32 ItemCount` of an `ArrayProperty` Value and
+   * dispatches:
+   *
+   * - `StructProperty` items (out-of-scope for Phase 2): open a placeholder
+   *   array, emit a `SkipBytes` over `Tag.Size - 4` bytes (the InnerTag and
+   *   item bodies), then close. The placeholder element keeps the assembler
+   *   `_pendingName` consumed by the array container; the `<skipped:N>`
+   *   string lands inside the array.
+   * - All other primitive / FString-shaped items: open the array; if count
+   *   is zero, emit `Close + TagName` directly. Otherwise push an
+   *   `arrayIter` frame and enqueue the first element opcode — subsequent
+   *   elements are queued lazily by `advanceArrayIter()` after each element
+   *   read, and the final element triggers `Close + TagName` from the same
+   *   hook.
+   *
+   * Emits a `tagHeader{field:'itemCount'}` step so the UI/log can surface the
+   * count inline with the other tag-header rows.
+   */
+  private handleArrayCount(): DecodeStepRow {
+    const start = this._reader.position;
+    const n = this._reader.readInt32();
+    this._tag.itemCount = n;
+
+    const propName = this._tag.name;
+    const itemType = this._tag.itemType;
+
+    if (itemType === 'StructProperty') {
+      const consumedInsideValue = this._reader.position - start;
+      const remainingBytes = this._tag.size - consumedInsideValue;
+      this._state.openArray(propName);
+      if (remainingBytes > 0) {
+        this._state.skipBytes(remainingBytes);
+      }
+      this._state.close();
+      this._state.tagName();
+    } else {
+      this._state.openArray(propName);
+      if (n === 0) {
+        this._state.close();
+        this._state.tagName();
+      } else {
+        this._frames.push({ kind: 'arrayIter', itemType, remaining: n });
+        this.enqueueArrayElement(itemType);
+      }
+    }
+
+    return this.tagHeaderStep('itemCount', n, start);
+  }
+
+  /**
+   * Enqueues exactly one element-read opcode for the given primitive /
+   * FString-shaped `ItemType`. Mirrors the dispatch in
+   * `StreamDecoder._arrayElementOpcodes` so that `advanceArrayIter()` can
+   * detect a completed element from the executed opcode alone.
+   *
+   * Per `gvas-format.mdc`, primitive arrays carry no per-element metadata —
+   * `BoolProperty` items are raw bytes (not the 0-size + `BoolVal` form used
+   * at the property-tag level), and `ByteProperty` items are raw bytes
+   * regardless of `EnumName` (when present, decoding the enum string is left
+   * to a follow-up). That keeps the wire-side invariant simple: every
+   * primitive item is exactly N bytes, every FString-shaped item is one
+   * length-prefixed string.
+   */
+  private enqueueArrayElement(itemType: string): void {
+    switch (itemType) {
+      case 'IntProperty':
+      case 'UInt32Property':
+        this._state.fixInt32(1);
+        return;
+      case 'Int64Property':
+        this._state.fieldInt64();
+        return;
+      case 'FloatProperty':
+        this._state.fieldFloat32();
+        return;
+      case 'DoubleProperty':
+        this._state.fieldDouble64();
+        return;
+      case 'BoolProperty':
+      case 'ByteProperty':
+        this._state.fieldByte();
+        return;
+      case 'NameProperty':
+      case 'StrProperty':
+      case 'EnumProperty':
+        this._state.fieldString();
+        return;
+      default:
+        throw new Error(`Unsupported ArrayProperty ItemType: ${itemType}`);
     }
   }
 
