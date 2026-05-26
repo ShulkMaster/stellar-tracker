@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BinaryReader, StreamDecoder } from 'tracker';
+import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
 import {
   HEADER_PREFIX,
   HEADER_PREFIX_BYTES,
@@ -13,7 +13,37 @@ import {
   FIRST_BODY_PROPERTY_BYTES,
   FIRST_BODY_PROPERTY_TAG_BYTES,
   EXPECTED_NEW_GAME_CREATE_TIME,
+  VECTOR_STRUCT_FIXTURE,
+  ROTATOR_STRUCT_FIXTURE,
+  GUID_STRUCT_FIXTURE,
+  DATETIME_STRUCT_FIXTURE,
+  GENERIC_STRUCT_FIXTURE,
+  EXPECTED_VECTOR,
+  EXPECTED_ROTATOR,
+  EXPECTED_GUID_HEX,
+  EXPECTED_DATETIME_TICKS,
+  EXPECTED_GENERIC_STRUCT,
 } from './fixtures';
+
+function decodeBody(fixtureBytes: Uint8Array): {
+  body: Record<string, unknown>;
+  decoder: StreamDecoder;
+  totalBytes: number;
+} {
+  const header = loadHeaderThroughSaveClass();
+  const buffer = new Uint8Array(header.length + fixtureBytes.length);
+  buffer.set(header, 0);
+  buffer.set(fixtureBytes, header.length);
+
+  const decoder = new StreamDecoder(new BinaryReader(buffer));
+  const assembler = new StreamAssembler(decoder);
+  const assembled = assembler.parseHeader() as Record<string, unknown>;
+  return {
+    body: assembled.body as Record<string, unknown>,
+    decoder,
+    totalBytes: buffer.length,
+  };
+}
 
 const FIRST_CUSTOM_VERSION = loadFirstCustomVersion();
 
@@ -164,5 +194,98 @@ describe('StreamDecoder', () => {
     expect(decoder.canStep).toBe(true);
     expect(decoder.position).toBe(0);
     expect(decoder.next()).toEqual({ kind: 'yieldName', name: 'stelarHeader' });
+  });
+
+  // ───────────────────────── Phase 1 — plain structs ──────────────────────────
+
+  it('decodes a Vector StructProperty as { x, y, z } and uses propName as the assembler key', () => {
+    const { body, decoder, totalBytes } = decodeBody(VECTOR_STRUCT_FIXTURE);
+
+    expect(body.Pos).toEqual(EXPECTED_VECTOR);
+    // Container must be keyed by property name, not StructType (Phase 1 bug fix).
+    expect(body).not.toHaveProperty('Vector');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('emits openStruct with propName (not structType) for Vector and reads 3 floats', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + VECTOR_STRUCT_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(VECTOR_STRUCT_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+
+    const openStructNames: string[] = [];
+    const yieldNamesAfterPos: string[] = [];
+    const floatReads: number[] = [];
+    let sawCloseAfterFloats = false;
+    let sawPropNoneTerminator = false;
+    let posYielded = false;
+
+    while (decoder.canStep) {
+      const step = decoder.next();
+      if (step.kind === 'openStruct') {
+        openStructNames.push(step.name);
+      } else if (step.kind === 'yieldName') {
+        if (step.name === 'Pos') posYielded = true;
+        else if (posYielded) yieldNamesAfterPos.push(step.name);
+      } else if (step.kind === 'read' && step.opcode === 'FieldFloat32') {
+        floatReads.push(step.value as number);
+      } else if (step.kind === 'close' && floatReads.length === 3) {
+        sawCloseAfterFloats = true;
+      } else if (step.kind === 'propNone') {
+        sawPropNoneTerminator = true;
+      }
+    }
+
+    expect(openStructNames).toContain('Pos');
+    expect(openStructNames).not.toContain('Vector');
+    expect(yieldNamesAfterPos.slice(0, 3)).toEqual(['x', 'y', 'z']);
+    expect(floatReads).toEqual([
+      EXPECTED_VECTOR.x,
+      EXPECTED_VECTOR.y,
+      EXPECTED_VECTOR.z,
+    ]);
+    expect(sawCloseAfterFloats).toBe(true);
+    expect(sawPropNoneTerminator).toBe(true);
+  });
+
+  it('decodes a Rotator StructProperty as { pitch, yaw, roll }', () => {
+    const { body, decoder, totalBytes } = decodeBody(ROTATOR_STRUCT_FIXTURE);
+
+    expect(body.Rot).toEqual(EXPECTED_ROTATOR);
+    expect(body).not.toHaveProperty('Rotator');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a Guid StructProperty as a single 32-char hex string (no sub-object)', () => {
+    const { body, decoder, totalBytes } = decodeBody(GUID_STRUCT_FIXTURE);
+
+    expect(body.Id).toBe(EXPECTED_GUID_HEX);
+    // Guid is a primitive value — no nested object should appear.
+    expect(typeof body.Id).toBe('string');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a DateTime StructProperty as a single bigint (no sub-object)', () => {
+    const { body, decoder, totalBytes } = decodeBody(DATETIME_STRUCT_FIXTURE);
+
+    expect(body.Created).toBe(EXPECTED_DATETIME_TICKS);
+    expect(typeof body.Created).toBe('bigint');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a generic StructProperty as a nested property list and resumes the parent body', () => {
+    const { body, decoder, totalBytes } = decodeBody(GENERIC_STRUCT_FIXTURE);
+
+    expect(body.Inner).toEqual(EXPECTED_GENERIC_STRUCT);
+    // The outer fixture has a trailing body `None`; reaching it cleanly proves
+    // `_listDepth` returned to baseline after the inner None.
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
   });
 });

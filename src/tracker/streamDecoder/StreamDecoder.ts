@@ -562,13 +562,7 @@ export class StreamDecoder {
         break;
       case 'StructProperty':
         this._state.yieldName(propName);
-        this._state.openStruct(this._tag.structType);
-        // Enter a nested property list. The list's terminating `None` (via
-        // handleTagName) decrements `_listDepth` and re-enqueues a `TagName`
-        // for the parent list — pre-queueing it here would put it ahead of
-        // the inner property's metadata in the FIFO queue.
-        this._listDepth++;
-        this._state.tagName();
+        this.enqueueStructValueSequence(propName, this._tag.structType);
         return;
       default:
         // ArrayProperty, MapProperty, SetProperty, TextProperty, unknown:
@@ -579,6 +573,78 @@ export class StreamDecoder {
     }
 
     this._state.tagName();
+  }
+
+  /**
+   * StructProperty value layout depends on `StructType`:
+   *
+   * - Specialized fixed-layout types (`Vector`, `Rotator`, `Quat`,
+   *   `LinearColor`, `Guid`, `DateTime`) are raw bytes — they do NOT enter a
+   *   nested property list. The decoder reads them directly and explicitly
+   *   re-enqueues a `TagName` to resume the parent property list.
+   * - All other `StructType`s are treated as a generic property list ending
+   *   in `None`. The terminating `None` (via `handleTagName`) decrements
+   *   `_listDepth` and re-enqueues the parent `TagName` itself, so we do NOT
+   *   tail-enqueue one here.
+   *
+   * `propName` (not `structType`) is the assembler key in every branch.
+   */
+  private enqueueStructValueSequence(propName: string, structType: string): void {
+    switch (structType) {
+      case 'Vector':
+        this._state.openStruct(propName);
+        this._state.yieldName('x'); this._state.fieldFloat32();
+        this._state.yieldName('y'); this._state.fieldFloat32();
+        this._state.yieldName('z'); this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'Rotator':
+        this._state.openStruct(propName);
+        this._state.yieldName('pitch'); this._state.fieldFloat32();
+        this._state.yieldName('yaw');   this._state.fieldFloat32();
+        this._state.yieldName('roll');  this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'Quat':
+        this._state.openStruct(propName);
+        this._state.yieldName('x'); this._state.fieldFloat32();
+        this._state.yieldName('y'); this._state.fieldFloat32();
+        this._state.yieldName('z'); this._state.fieldFloat32();
+        this._state.yieldName('w'); this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'LinearColor':
+        this._state.openStruct(propName);
+        this._state.yieldName('r'); this._state.fieldFloat32();
+        this._state.yieldName('g'); this._state.fieldFloat32();
+        this._state.yieldName('b'); this._state.fieldFloat32();
+        this._state.yieldName('a'); this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'Guid':
+        this._state.fieldGuid();
+        this._state.tagName();
+        return;
+
+      case 'DateTime':
+        this._state.fieldInt64();
+        this._state.tagName();
+        return;
+
+      default:
+        this._state.openStruct(propName);
+        this._listDepth++;
+        this._state.tagName();
+        return;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
