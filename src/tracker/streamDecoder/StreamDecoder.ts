@@ -3,9 +3,15 @@ import { BinaryReader } from 'tracker/binaryReader/BinaryReader';
 import { toHex } from 'tracker/decoder/decoder';
 import { RingBuffer } from 'tracker/ringBuffer/RingBuffer';
 import { Opcode, OPCODE_NAMES } from 'tracker/ringBuffer/Opcodes';
-import type { ParseFrame } from './ParseFrames';
+import type { ParseFrame, ArrayIterElement } from './ParseFrames';
 
-type OpcodeHandler = () => DecodeStepRow;
+/**
+ * Handlers may return `null` to signal a *scheduler* opcode that pushes
+ * further opcodes into the ring buffer but produces no visible step row
+ * (e.g. `CustomVersionEntry`). `next()` drains scheduler opcodes
+ * transparently and only returns the next concrete row.
+ */
+type OpcodeHandler = () => DecodeStepRow | null;
 
 function defineOpcodeHandlers(
   handlers: { [K in Opcode]: OpcodeHandler },
@@ -41,6 +47,19 @@ export class StreamDecoder {
   private _state: RingBuffer;
   private _lastYieldName: string | null = null;
   private _customVersionCount = 0;
+  /**
+   * Index of the *next* `CustomVersionEntry` opcode to fire. Reset when the
+   * customVersions block is scheduled in `handleOpenArray`. Each
+   * `handleCustomVersionEntry` call snapshots this into
+   * `_currentCustomVersionIndex` and increments it by one.
+   */
+  private _customVersionNextIndex = 0;
+  /**
+   * Index stamped onto the six sub-rows emitted by the currently in-flight
+   * `CustomVersionEntry`. `null` outside of an entry; cleared by the
+   * trailing `close` row of the entry.
+   */
+  private _currentCustomVersionIndex: number | null = null;
   private readonly _frames: ParseFrame[] = [];
   private _tag: TagState = StreamDecoder.makeEmptyTag();
   /**
@@ -85,6 +104,7 @@ export class StreamDecoder {
     [Opcode.TagKeyType]: () => this.handleTagKeyType(),
     [Opcode.TagValueType]: () => this.handleTagValueType(),
     [Opcode.ArrayCount]: () => this.handleArrayCount(),
+    [Opcode.CustomVersionEntry]: () => this.handleCustomVersionEntry(),
   });
 
   constructor(reader: BinaryReader) {
@@ -110,6 +130,8 @@ export class StreamDecoder {
     this._state = RingBuffer.create(1024);
     this._lastYieldName = null;
     this._customVersionCount = 0;
+    this._customVersionNextIndex = 0;
+    this._currentCustomVersionIndex = null;
     this._frames.length = 0;
     this._tag = StreamDecoder.makeEmptyTag();
     this._listDepth = 0;
@@ -139,6 +161,10 @@ export class StreamDecoder {
    * `arrayIter` frame is on top of the stack. Must mirror the dispatch table
    * in `enqueueArrayElement()`. Anything else (`OpenArray`, `Close`,
    * `TagName`, ...) is ignored by the post-step hook.
+   *
+   * Body primitive arrays are the only remaining iter-frame caller — the
+   * GVAS-header `customVersions` block is now scheduled inline via the
+   * `CustomVersionEntry` opcode and never pushes an iter frame.
    */
   private static readonly _arrayElementOpcodes: ReadonlySet<Opcode> = new Set([
     Opcode.FixInt32,
@@ -175,50 +201,58 @@ export class StreamDecoder {
     this._state.yieldName('customVersionCount');
     this._state.fixInt32(1);
     this._state.openArray('customVersions');
+    // The post-customVersions trailing program (saveClassName/enterBody) is
+    // pushed by the iter frame's `trailingOpcodes` callback (or, for an
+    // empty customVersions array, inline by `handleOpenArray`). Pushing it
+    // here would interleave incorrectly with the per-element opcodes that
+    // `advanceArrayIter` lazily appends at the tail of the FIFO queue.
+  }
+
+  private enqueueHeaderTrailing(): void {
     this._state.yieldName('saveClassName');
     this._state.fieldString();
     this._state.enterBody();
   }
 
   public next(): DecodeStepRow {
-    if (this._frames.length > 0) {
-      const top = this._frames[this._frames.length - 1]!;
-      if (top.kind === 'customVersions') {
-        return this.dispatchCustomVersions(top);
+    while (this.canStep) {
+      const opcode = this._state.decode();
+      const handler = this._opcodeHandlers[opcode];
+
+      if (handler === undefined) {
+        throw new Error(`Unknown opcode identifier ${opcode}`);
       }
+
+      const row = handler();
+      if (row === null) {
+        // Scheduler opcode (e.g. CustomVersionEntry): produced no visible row,
+        // only pushed more opcodes into the ring buffer. Drain and continue.
+        continue;
+      }
+      this.decorateWithCustomVersionIndex(row);
+      this.advanceArrayIter(opcode);
+      return row;
     }
-
-    const opcode = this._state.decode();
-    const handler = this._opcodeHandlers[opcode];
-
-    if (handler === undefined) {
-      throw new Error(`Unknown opcode identifier ${opcode}`);
-    }
-
-    const row = handler();
-    this.advanceArrayIter(opcode);
-    return row;
+    throw new Error('next() called with no available opcodes or frames');
   }
 
   /**
    * Post-step hook for `ArrayProperty` iteration. Runs after every opcode
-   * handler. If the top frame is an `arrayIter` AND the just-executed opcode
-   * is one of the registered element opcodes, decrement the remaining counter
-   * and either re-enqueue the next element opcode or close out the array
-   * (`Close` + parent `TagName`). All other opcodes are no-ops here.
+   * handler. The boundary is any opcode in `_arrayElementOpcodes` (a single
+   * read per element — body primitive arrays are the only iter-frame
+   * caller). On boundary, decrement `remaining` and either re-enqueue the
+   * next element template or tear down the array (`Close` plus the parent
+   * `TagName`).
    */
   private advanceArrayIter(executed: Opcode): void {
     const top = this._frames[this._frames.length - 1];
-    if (!top || top.kind !== 'arrayIter') {
-      return;
-    }
-    if (!StreamDecoder._arrayElementOpcodes.has(executed)) {
+    if (!top || !StreamDecoder._arrayElementOpcodes.has(executed)) {
       return;
     }
 
     top.remaining -= 1;
     if (top.remaining > 0) {
-      this.enqueueArrayElement(top.itemType);
+      this.enqueueArrayElement(top.element);
     } else {
       this._frames.pop();
       this._state.close();
@@ -227,47 +261,24 @@ export class StreamDecoder {
   }
 
   /**
-   * Header customVersions: 56 entries of `{guid: GUID, version: Int32}`.
-   * Item layout is hardcoded here (not driven by a schema map) and emits the
-   * same event sequence the assembler already understands.
+   * Stamps the current custom-version entry index onto each sub-row emitted
+   * by the in-flight `CustomVersionEntry`. The entry's terminating `close`
+   * row also clears the per-entry index so subsequent rows are untagged.
    */
-  private dispatchCustomVersions(frame: ParseFrame & { kind: 'customVersions' }): DecodeStepRow {
-    if (frame.index >= frame.count) {
-      this._frames.pop();
-      return { kind: 'close' };
+  private decorateWithCustomVersionIndex(row: DecodeStepRow): void {
+    if (this._currentCustomVersionIndex === null) {
+      return;
     }
-
-    switch (frame.phase) {
-      case 'open': {
-        frame.phase = 'guidName';
-        return { kind: 'openStruct', name: '', index: frame.index };
-      }
-      case 'guidName': {
-        frame.phase = 'guid';
-        return { kind: 'yieldName', name: 'guid', index: frame.index };
-      }
-      case 'guid': {
-        const start = this._reader.position;
-        const value = this._reader.readGUID();
-        frame.phase = 'versionName';
-        return this.readStep(Opcode.FieldGuid, '', value, start, frame.index);
-      }
-      case 'versionName': {
-        frame.phase = 'version';
-        return { kind: 'yieldName', name: 'version', index: frame.index };
-      }
-      case 'version': {
-        const start = this._reader.position;
-        const value = this._reader.readInt32();
-        frame.phase = 'close';
-        return this.readStep(Opcode.FixInt32, '1', value, start, frame.index);
-      }
-      case 'close': {
-        const closedIndex = frame.index;
-        frame.index++;
-        frame.phase = 'open';
-        return { kind: 'close', index: closedIndex };
-      }
+    switch (row.kind) {
+      case 'openStruct':
+      case 'yieldName':
+      case 'read':
+        row.index = this._currentCustomVersionIndex;
+        break;
+      case 'close':
+        row.index = this._currentCustomVersionIndex;
+        this._currentCustomVersionIndex = null;
+        break;
     }
   }
 
@@ -286,16 +297,56 @@ export class StreamDecoder {
 
     if (name === 'customVersions') {
       const count = this._customVersionCount;
-      this._frames.push({
-        kind: 'customVersions',
-        count,
-        index: 0,
-        phase: 'open',
-      });
+      this._customVersionNextIndex = 0;
+      // GVAS header customVersions is a fully-known, fixed-shape block:
+      // N x { GUID(16), Int32 }. Schedule it inline by pushing one
+      // CustomVersionEntry; the handler chains itself N times and the
+      // last invocation tail-pushes close + the post-header trailing
+      // opcodes. No arrayIter frame, no trailing-op closure.
+      if (count > 0) {
+        this._state.customVersionEntry();
+      } else {
+        this._state.close();
+        this.enqueueHeaderTrailing();
+      }
       return { kind: 'openArray', name, count };
     }
 
     return { kind: 'openArray', name };
+  }
+
+  /**
+   * Scheduler opcode for one GVAS-header custom-version entry. Snapshots
+   * the next entry index, pushes the six sub-opcodes that materialize
+   * `{ guid: GUID(16), version: Int32(4) }`, then either chains the next
+   * `CustomVersionEntry` (entries remaining) or tail-pushes the array
+   * `close` and the post-header trailing opcodes (last entry). Returns
+   * `null` so `next()` drains it transparently; the emitted sub-rows are
+   * stamped with the snapshot index by `decorateWithCustomVersionIndex`.
+   *
+   * Self-chaining is necessary because the RingBuffer is FIFO: pushing
+   * all N schedulers up-front would interleave their sub-ops AFTER the
+   * already-queued close+trailing, desynchronizing the reader.
+   */
+  private handleCustomVersionEntry(): null {
+    this._currentCustomVersionIndex = this._customVersionNextIndex;
+    this._customVersionNextIndex += 1;
+
+    this._state.openStruct('');
+    this._state.yieldName('guid');
+    this._state.fieldGuid();
+    this._state.yieldName('version');
+    this._state.fixInt32(1);
+    this._state.close();
+
+    if (this._customVersionNextIndex < this._customVersionCount) {
+      this._state.customVersionEntry();
+    } else {
+      this._state.close();
+      this.enqueueHeaderTrailing();
+    }
+
+    return null;
   }
 
   private handleOpenMap(): Extract<DecodeStepRow, { kind: 'openMap' }> {
@@ -318,26 +369,31 @@ export class StreamDecoder {
   }
 
   private handleFixInt32(): Extract<DecodeStepRow, { kind: 'read' }> {
+    // `int16` is the in-program count argument. The codebase only ever emits
+    // `fixInt32(1)` so we assert it inline rather than maintain a dead batch
+    // path. Lift this when a real multi-int site appears.
     const count = this._state.int16();
+    if (count !== 1) {
+      throw new Error(`FixInt32 count must be 1, got ${count}`);
+    }
     const start = this._reader.position;
-    const value = count === 1
-      ? this._reader.readInt32()
-      : this.readInt32Batch(count);
+    const value = this._reader.readInt32();
 
-    if (this._lastYieldName === 'customVersionCount' && count === 1) {
-      this._customVersionCount = value as number;
+    if (this._lastYieldName === 'customVersionCount') {
+      this._customVersionCount = value;
     }
 
-    return this.readStep(Opcode.FixInt32, String(count), value, start);
+    return this.readStep(Opcode.FixInt32, '1', value, start);
   }
 
   private handleFixUint16(): Extract<DecodeStepRow, { kind: 'read' }> {
     const count = this._state.int16();
+    if (count !== 1) {
+      throw new Error(`FixUint16 count must be 1, got ${count}`);
+    }
     const start = this._reader.position;
-    const value = count === 1
-      ? this._reader.readUint16()
-      : this.readUint16Batch(count);
-    return this.readStep(Opcode.FixUint16, String(count), value, start);
+    const value = this._reader.readUint16();
+    return this.readStep(Opcode.FixUint16, '1', value, start);
   }
 
   private handleFieldString(): Extract<DecodeStepRow, { kind: 'read' }> {
@@ -744,8 +800,14 @@ export class StreamDecoder {
         this._state.close();
         this._state.tagName();
       } else {
-        this._frames.push({ kind: 'arrayIter', itemType, remaining: n });
-        this.enqueueArrayElement(itemType);
+        const element: ArrayIterElement = { itemType };
+        this._frames.push({
+          kind: 'arrayIter',
+          remaining: n,
+          totalCount: n,
+          element,
+        });
+        this.enqueueArrayElement(element);
       }
     }
 
@@ -753,21 +815,18 @@ export class StreamDecoder {
   }
 
   /**
-   * Enqueues exactly one element-read opcode for the given primitive /
-   * FString-shaped `ItemType`. Mirrors the dispatch in
-   * `StreamDecoder._arrayElementOpcodes` so that `advanceArrayIter()` can
-   * detect a completed element from the executed opcode alone.
+   * Enqueue one body primitive-array element opcode. Boundary detection in
+   * `advanceArrayIter()` pairs with this single read.
    *
    * Per `gvas-format.mdc`, primitive arrays carry no per-element metadata —
    * `BoolProperty` items are raw bytes (not the 0-size + `BoolVal` form used
    * at the property-tag level), and `ByteProperty` items are raw bytes
-   * regardless of `EnumName` (when present, decoding the enum string is left
-   * to a follow-up). That keeps the wire-side invariant simple: every
-   * primitive item is exactly N bytes, every FString-shaped item is one
-   * length-prefixed string.
+   * regardless of `EnumName`. That keeps the wire-side invariant simple:
+   * every primitive item is exactly N bytes, every FString-shaped item is
+   * one length-prefixed string.
    */
-  private enqueueArrayElement(itemType: string): void {
-    switch (itemType) {
+  private enqueueArrayElement(element: ArrayIterElement): void {
+    switch (element.itemType) {
       case 'IntProperty':
       case 'UInt32Property':
         this._state.fixInt32(1);
@@ -791,7 +850,7 @@ export class StreamDecoder {
         this._state.fieldString();
         return;
       default:
-        throw new Error(`Unsupported ArrayProperty ItemType: ${itemType}`);
+        throw new Error(`Unsupported ArrayProperty ItemType: ${element.itemType}`);
     }
   }
 
@@ -833,22 +892,6 @@ export class StreamDecoder {
       row.index = index;
     }
     return row;
-  }
-
-  private readInt32Batch(count: number): number[] {
-    const result = new Array<number>(count);
-    for (let i = 0; i < count; i++) {
-      result[i] = this._reader.readInt32();
-    }
-    return result;
-  }
-
-  private readUint16Batch(count: number): number[] {
-    const result = new Array<number>(count);
-    for (let i = 0; i < count; i++) {
-      result[i] = this._reader.readUint16();
-    }
-    return result;
   }
 
   private hexFromPosition(start: number): string {

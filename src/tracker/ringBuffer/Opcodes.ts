@@ -81,6 +81,17 @@ export const enum Opcode {
    * `arrayIter` frame and enqueues the first element opcode.
    */
   ArrayCount = 31,
+  /**
+   * GVAS header-only scheduler opcode. Pushes the six sub-opcodes that
+   * materialize one `{ guid: GUID(16), version: Int32(4) }` custom-version
+   * entry (openStruct + yieldName/FieldGuid + yieldName/FixInt32 + close)
+   * with the current entry index stamped onto each emitted row.
+   *
+   * The handler returns `null`; `StreamDecoder.next()` drains scheduler
+   * opcodes transparently so the row sequence observed by callers is the
+   * six sub-rows per entry — no extra row for the scheduler itself.
+   */
+  CustomVersionEntry = 32,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -116,4 +127,5 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.TagKeyType]: 'TagKeyType',
   [Opcode.TagValueType]: 'TagValueType',
   [Opcode.ArrayCount]: 'ArrayCount',
+  [Opcode.CustomVersionEntry]: 'CustomVersionEntry',
 };

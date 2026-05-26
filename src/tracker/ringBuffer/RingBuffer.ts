@@ -52,10 +52,6 @@ export class RingBuffer {
     return this._buffer.buffer;
   }
 
-  public private(op: Opcode): void {
-    this.pushByte(op);
-  }
-
   public fixAscii(chars: number): void {
     this.pushByte(Opcode.FixAscii);
     this.pushInt16(chars);
@@ -162,6 +158,10 @@ export class RingBuffer {
 
   public arrayCount(): void {
     this.pushByte(Opcode.ArrayCount);
+  }
+
+  public customVersionEntry(): void {
+    this.pushByte(Opcode.CustomVersionEntry);
   }
 
   public yieldName(name: string): void {

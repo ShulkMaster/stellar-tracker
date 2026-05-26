@@ -1,38 +1,28 @@
 /**
- * Decoder-side frame stack. Most of the parser is opcode-driven and does not
- * need frames; the two exceptions are:
+ * Decoder-side frame stack.
  *
- * - `customVersions` — header-only iteration whose item layout (GUID + Int32)
- *   is hardcoded inside `StreamDecoder` rather than looked up from a schema.
- * - `arrayIter` — body-side iteration over an `ArrayProperty` Value, holding
- *   the element type and remaining-element counter for the post-step hook in
- *   `next()`. Carries no type-specific layout (`itemType` is read from the
- *   wire; `remaining` is just a counter).
+ * A frame is only needed for *iterating* a body-array Value: once an
+ * `arrayIter` frame is on top, the post-step hook in `StreamDecoder.next()`
+ * re-enqueues the next element opcode after each completed element and tears
+ * the array down on completion. Everything else (property tags, nested
+ * struct property-lists, the GVAS header's `customVersions` block via the
+ * `CustomVersionEntry` scheduler opcode, ...) is opcode-driven and
+ * frame-free.
+ *
+ * Body struct-array items (`ArrayProperty` of `StructProperty`) still fall
+ * back to `SkipBytes` in `enqueueValueSequence` and so do not push a frame
+ * either. When implemented they will likely need a second element variant
+ * here, but for now the type is intentionally flat (no shape discriminator).
  */
-export type ParseFrame =
-  | {
-      kind: 'customVersions';
-      count: number;
-      index: number;
-      /**
-       * Sub-step within a single element iteration.
-       *   open       — emit OpenStruct
-       *   guidName   — emit YieldName 'guid'
-       *   guid       — read FieldGuid value
-       *   versionName — emit YieldName 'version'
-       *   version    — read FixInt32 value
-       *   close      — emit Close, advance index
-       */
-      phase:
-        | 'open'
-        | 'guidName'
-        | 'guid'
-        | 'versionName'
-        | 'version'
-        | 'close';
-    }
-  | {
-      kind: 'arrayIter';
-      itemType: string;
-      remaining: number;
-    };
+export type ArrayIterElement = {
+  itemType: string;
+};
+
+export type ParseFrame = {
+  kind: 'arrayIter';
+  /** Elements still to consume. Decremented after each completed element. */
+  remaining: number;
+  /** Pinned at frame creation; reserved for future per-element decoration. */
+  totalCount: number;
+  element: ArrayIterElement;
+};
