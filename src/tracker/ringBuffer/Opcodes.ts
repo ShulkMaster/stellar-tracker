@@ -75,6 +75,12 @@ export const enum Opcode {
   TagKeyType = 29,
   /** MapProperty metadata — value type FString. */
   TagValueType = 30,
+  /**
+   * ArrayProperty value-prefix — reads Int32 ItemCount, then opens the array
+   * container and either skips an empty payload (count == 0) or pushes an
+   * `arrayIter` frame and enqueues the first element opcode.
+   */
+  ArrayCount = 31,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -109,4 +115,5 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.TagItemType]: 'TagItemType',
   [Opcode.TagKeyType]: 'TagKeyType',
   [Opcode.TagValueType]: 'TagValueType',
+  [Opcode.ArrayCount]: 'ArrayCount',
 };

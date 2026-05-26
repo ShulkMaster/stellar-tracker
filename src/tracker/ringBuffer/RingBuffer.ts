@@ -160,6 +160,10 @@ export class RingBuffer {
     this.pushByte(Opcode.TagValueType);
   }
 
+  public arrayCount(): void {
+    this.pushByte(Opcode.ArrayCount);
+  }
+
   public yieldName(name: string): void {
     this.pushNamedOpcode(Opcode.YieldName, name);
   }
