@@ -52,10 +52,6 @@ export class RingBuffer {
     return this._buffer.buffer;
   }
 
-  public private(op: Opcode): void {
-    this.pushByte(op);
-  }
-
   public fixAscii(chars: number): void {
     this.pushByte(Opcode.FixAscii);
     this.pushInt16(chars);
@@ -93,6 +89,10 @@ export class RingBuffer {
 
   public fieldByte(): void {
     this.pushByte(Opcode.FieldByte);
+  }
+
+  public fieldInt8(): void {
+    this.pushByte(Opcode.FieldInt8);
   }
 
   public valBool(): void {
@@ -158,6 +158,22 @@ export class RingBuffer {
 
   public tagValueType(): void {
     this.pushByte(Opcode.TagValueType);
+  }
+
+  public arrayCount(): void {
+    this.pushByte(Opcode.ArrayCount);
+  }
+
+  public customVersionEntry(): void {
+    this.pushByte(Opcode.CustomVersionEntry);
+  }
+
+  public mapCount(): void {
+    this.pushByte(Opcode.MapCount);
+  }
+
+  public mapEntry(): void {
+    this.pushByte(Opcode.MapEntry);
   }
 
   public yieldName(name: string): void {

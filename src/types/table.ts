@@ -20,7 +20,10 @@ export type TagHeaderField =
   | 'boolVal'
   | 'itemType'
   | 'keyType'
-  | 'valueType';
+  | 'valueType'
+  | 'itemCount'
+  | 'entryCount'
+  | 'mapKey';
 
 export type DecodeStepRow =
   | {
@@ -41,7 +44,7 @@ export type DecodeStepRow =
   | { kind: 'yieldName'; name: string; index?: number }
   | { kind: 'openStruct'; name: string; index?: number }
   | { kind: 'openArray'; name: string; count?: number }
-  | { kind: 'openMap'; name: string }
+  | { kind: 'openMap'; name: string; count?: number }
   | { kind: 'close'; index?: number }
   | { kind: 'propNone' };
 

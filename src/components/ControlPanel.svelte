@@ -3,25 +3,36 @@
     onLoad: () => void;
     onStep: () => void;
     onStepToClose: () => void;
+    onStepToIterEnd: () => void;
     onReset: () => void;
     canStep: boolean;
     isLoading: boolean;
     isEOF: boolean;
     position: number;
     totalSize: number;
+    iterDepth: number;
+    iterKind: 'arrayIter' | 'mapIter' | null;
   }
 
   let {
     onLoad,
     onStep,
     onStepToClose,
+    onStepToIterEnd,
     onReset,
     canStep,
     isLoading,
     isEOF,
     position,
     totalSize,
+    iterDepth,
+    iterKind,
   }: Props = $props();
+
+  let iterLabel = $derived(
+    iterKind === 'mapIter' ? 'map' : iterKind === 'arrayIter' ? 'array' : 'iteration',
+  );
+  let canSkipIter = $derived(canStep && !isEOF && iterDepth > 0);
 
   let progress = $derived(totalSize > 0 ? (position / totalSize) * 100 : 0);
 
@@ -69,6 +80,19 @@
           title="Step until the next Close or PropNone"
         >
           Next close ⤓
+        </button>
+        <button
+          class="btn btn-outline-warning btn-action"
+          onclick={onStepToIterEnd}
+          disabled={!canSkipIter}
+          title={canSkipIter
+            ? `Skip every remaining element of the current ${iterLabel} and emit its Close`
+            : 'Not currently inside an array or map iteration'}
+        >
+          Skip {iterLabel} ⇥
+          {#if iterDepth > 1}
+            <span class="depth-badge" aria-label="iteration depth">{iterDepth}</span>
+          {/if}
         </button>
         <button class="btn btn-outline-danger btn-action" onclick={onReset}>
           Reset
@@ -158,6 +182,23 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
+  }
+
+  .depth-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.4rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    border-radius: 999px;
+    background: rgba(210, 153, 34, 0.18);
+    border: 1px solid rgba(210, 153, 34, 0.4);
+    color: #e3b341;
+    font-family: var(--st-mono);
   }
 
   .panel-stats {

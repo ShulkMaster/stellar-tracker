@@ -1,12 +1,17 @@
 import type { SaveHeader } from 'types/safeFile';
 import type { DecodeStepRow, DecodeValue } from 'types/table';
+import { ENTITY } from 'types/entity';
 import { StreamDecoder } from 'tracker/streamDecoder/StreamDecoder';
 
-type Container = Record<string, unknown> | unknown[];
+type ObjectContainer = Record<string | symbol, unknown>;
+type Container = ObjectContainer | unknown[];
 
 export class StreamAssembler {
   private readonly _decoder: StreamDecoder;
-  private readonly _header: Record<string, unknown> = { saveClassName: '' };
+  private readonly _header: ObjectContainer = {
+    saveClassName: '',
+    [ENTITY]: 'struct',
+  };
   private readonly _stack: Container[] = [];
   private _pendingName: string | null = null;
 
@@ -50,7 +55,7 @@ export class StreamAssembler {
         // Lifecycle / debug-only events: surfaced to the UI, not assembled.
         break;
       case 'openStruct': {
-        const container: Record<string, unknown> = {};
+        const container: ObjectContainer = { [ENTITY]: 'struct' };
         const target = this.currentTarget();
         if (Array.isArray(target)) {
           target.push(container);
@@ -67,7 +72,7 @@ export class StreamAssembler {
         break;
       }
       case 'openMap': {
-        const container: Record<string, unknown> = {};
+        const container: ObjectContainer = { [ENTITY]: 'map' };
         this.assignContainer(step.name, container);
         this._stack.push(container);
         break;
@@ -80,16 +85,20 @@ export class StreamAssembler {
   }
 
   private assignValue(value: DecodeValue): void {
+    const target = this.currentTarget();
+    if (Array.isArray(target)) {
+      // Array elements legitimately have no preceding YieldName (the array
+      // container is keyed once at OpenArray time; subsequent reads just
+      // append). Push and clear any stale pending name.
+      target.push(value);
+      this._pendingName = null;
+      return;
+    }
+
     if (this._pendingName === null) {
       throw new Error('Read step without a preceding YieldName');
     }
-
-    const target = this.currentTarget();
-    if (Array.isArray(target)) {
-      target.push(value);
-    } else {
-      target[this._pendingName] = value;
-    }
+    target[this._pendingName] = value;
     this._pendingName = null;
   }
 

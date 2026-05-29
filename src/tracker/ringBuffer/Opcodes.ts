@@ -75,6 +75,50 @@ export const enum Opcode {
   TagKeyType = 29,
   /** MapProperty metadata — value type FString. */
   TagValueType = 30,
+  /**
+   * ArrayProperty value-prefix — reads Int32 ItemCount, then opens the array
+   * container and either skips an empty payload (count == 0) or pushes an
+   * `arrayIter` frame and enqueues the first element opcode.
+   */
+  ArrayCount = 31,
+  /**
+   * GVAS header-only scheduler opcode. Pushes the six sub-opcodes that
+   * materialize one `{ guid: GUID(16), version: Int32(4) }` custom-version
+   * entry (openStruct + yieldName/FieldGuid + yieldName/FixInt32 + close)
+   * with the current entry index stamped onto each emitted row.
+   *
+   * The handler returns `null`; `StreamDecoder.next()` drains scheduler
+   * opcodes transparently so the row sequence observed by callers is the
+   * six sub-rows per entry — no extra row for the scheduler itself.
+   */
+  CustomVersionEntry = 32,
+
+  /**
+   * MapProperty value-prefix opcode. Reads the 4-byte unused/padding
+   * field then the `EntryCount` Int32, opens the map container, and
+   * either pushes a `mapIter` frame + one `MapEntry` opcode (entries > 0)
+   * or short-circuits to `close + tagName` (empty map). Emits a
+   * `tagHeader{field:'entryCount'}` row so the byte log surfaces the
+   * count inline with other tag-header rows.
+   */
+  MapCount = 33,
+
+  /**
+   * MapProperty per-entry scheduler. Reads one key per the active
+   * `mapIter` frame's `keyType`, emits a `tagHeader{field:'mapKey'}`
+   * row carrying the key bytes, then pushes the value-reading
+   * opcode(s) per `valueType`:
+   *
+   * - primitive ValueType: `yieldName(keyStr) + <primitive read>`
+   * - `StructProperty` value: `openStruct(keyStr) + _listDepth++ + tagName`
+   *
+   * The next entry (or the map's tear-down) is queued by the
+   * `advancePropertyIter` post-step hook in `StreamDecoder.next()`.
+   */
+  MapEntry = 34,
+
+  /** Reads a signed Int8 value from the file (1 byte). */
+  FieldInt8 = 35,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -109,4 +153,9 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.TagItemType]: 'TagItemType',
   [Opcode.TagKeyType]: 'TagKeyType',
   [Opcode.TagValueType]: 'TagValueType',
+  [Opcode.ArrayCount]: 'ArrayCount',
+  [Opcode.CustomVersionEntry]: 'CustomVersionEntry',
+  [Opcode.MapCount]: 'MapCount',
+  [Opcode.MapEntry]: 'MapEntry',
+  [Opcode.FieldInt8]: 'FieldInt8',
 };

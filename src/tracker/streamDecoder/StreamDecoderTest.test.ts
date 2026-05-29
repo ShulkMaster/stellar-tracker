@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { BinaryReader, StreamDecoder } from 'tracker';
+import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
+import { ENTITY } from 'types/entity';
 import {
   HEADER_PREFIX,
   HEADER_PREFIX_BYTES,
@@ -13,7 +14,52 @@ import {
   FIRST_BODY_PROPERTY_BYTES,
   FIRST_BODY_PROPERTY_TAG_BYTES,
   EXPECTED_NEW_GAME_CREATE_TIME,
+  VECTOR_STRUCT_FIXTURE,
+  ROTATOR_STRUCT_FIXTURE,
+  GUID_STRUCT_FIXTURE,
+  DATETIME_STRUCT_FIXTURE,
+  GENERIC_STRUCT_FIXTURE,
+  EXPECTED_VECTOR,
+  EXPECTED_ROTATOR,
+  EXPECTED_GUID_HEX,
+  EXPECTED_DATETIME_TICKS,
+  EXPECTED_GENERIC_STRUCT,
+  PRIMITIVE_ARRAY_FIXTURE,
+  NAME_ARRAY_FIXTURE,
+  EMPTY_ARRAY_FIXTURE,
+  STRUCT_ARRAY_FIXTURE,
+  STRUCT_ARRAY_PAYLOAD_BYTES,
+  EXPECTED_LOCKID_VALUES,
+  EXPECTED_ITEM_QUICK_SLOT_VALUES,
+  MAP_NAME_FLOAT_FIXTURE,
+  MAP_NAME_STRUCT_FIXTURE,
+  MAP_INT_INT_EMPTY_FIXTURE,
+  MAP_INT_STRUCT_FIXTURE,
+  EXPECTED_MAP_NAME_FLOAT,
+  EXPECTED_MAP_NAME_STRUCT,
+  EXPECTED_MAP_INT_STRUCT,
 } from './fixtures';
+import type { DecodeStepRow } from 'types/table';
+
+function decodeBody(fixtureBytes: Uint8Array): {
+  body: Record<string, unknown>;
+  decoder: StreamDecoder;
+  totalBytes: number;
+} {
+  const header = loadHeaderThroughSaveClass();
+  const buffer = new Uint8Array(header.length + fixtureBytes.length);
+  buffer.set(header, 0);
+  buffer.set(fixtureBytes, header.length);
+
+  const decoder = new StreamDecoder(new BinaryReader(buffer));
+  const assembler = new StreamAssembler(decoder);
+  const assembled = assembler.parseHeader() as Record<string, unknown>;
+  return {
+    body: assembled.body as Record<string, unknown>,
+    decoder,
+    totalBytes: buffer.length,
+  };
+}
 
 const FIRST_CUSTOM_VERSION = loadFirstCustomVersion();
 
@@ -164,5 +210,375 @@ describe('StreamDecoder', () => {
     expect(decoder.canStep).toBe(true);
     expect(decoder.position).toBe(0);
     expect(decoder.next()).toEqual({ kind: 'yieldName', name: 'stelarHeader' });
+  });
+
+  // ───────────────────────── Phase 1 — plain structs ──────────────────────────
+
+  it('decodes a Vector StructProperty as { x, y, z } and uses propName as the assembler key', () => {
+    const { body, decoder, totalBytes } = decodeBody(VECTOR_STRUCT_FIXTURE);
+
+    expect(body.Pos).toMatchObject(EXPECTED_VECTOR);
+    // Container must be keyed by property name, not StructType (Phase 1 bug fix).
+    expect(body).not.toHaveProperty('Vector');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('emits openStruct with propName (not structType) for Vector and reads 3 floats', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + VECTOR_STRUCT_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(VECTOR_STRUCT_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+
+    const openStructNames: string[] = [];
+    const yieldNamesAfterPos: string[] = [];
+    const floatReads: number[] = [];
+    let sawCloseAfterFloats = false;
+    let sawPropNoneTerminator = false;
+    let posYielded = false;
+
+    while (decoder.canStep) {
+      const step = decoder.next();
+      if (step.kind === 'openStruct') {
+        openStructNames.push(step.name);
+      } else if (step.kind === 'yieldName') {
+        if (step.name === 'Pos') posYielded = true;
+        else if (posYielded) yieldNamesAfterPos.push(step.name);
+      } else if (step.kind === 'read' && step.opcode === 'FieldFloat32') {
+        floatReads.push(step.value as number);
+      } else if (step.kind === 'close' && floatReads.length === 3) {
+        sawCloseAfterFloats = true;
+      } else if (step.kind === 'propNone') {
+        sawPropNoneTerminator = true;
+      }
+    }
+
+    expect(openStructNames).toContain('Pos');
+    expect(openStructNames).not.toContain('Vector');
+    expect(yieldNamesAfterPos.slice(0, 3)).toEqual(['x', 'y', 'z']);
+    expect(floatReads).toEqual([
+      EXPECTED_VECTOR.x,
+      EXPECTED_VECTOR.y,
+      EXPECTED_VECTOR.z,
+    ]);
+    expect(sawCloseAfterFloats).toBe(true);
+    expect(sawPropNoneTerminator).toBe(true);
+  });
+
+  it('decodes a Rotator StructProperty as { pitch, yaw, roll }', () => {
+    const { body, decoder, totalBytes } = decodeBody(ROTATOR_STRUCT_FIXTURE);
+
+    expect(body.Rot).toMatchObject(EXPECTED_ROTATOR);
+    expect(body).not.toHaveProperty('Rotator');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a Guid StructProperty as a single 32-char hex string (no sub-object)', () => {
+    const { body, decoder, totalBytes } = decodeBody(GUID_STRUCT_FIXTURE);
+
+    expect(body.Id).toBe(EXPECTED_GUID_HEX);
+    // Guid is a primitive value — no nested object should appear.
+    expect(typeof body.Id).toBe('string');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a DateTime StructProperty as a single bigint (no sub-object)', () => {
+    const { body, decoder, totalBytes } = decodeBody(DATETIME_STRUCT_FIXTURE);
+
+    expect(body.Created).toBe(EXPECTED_DATETIME_TICKS);
+    expect(typeof body.Created).toBe('bigint');
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a generic StructProperty as a nested property list and resumes the parent body', () => {
+    const { body, decoder, totalBytes } = decodeBody(GENERIC_STRUCT_FIXTURE);
+
+    expect(body.Inner).toMatchObject(EXPECTED_GENERIC_STRUCT);
+    // The outer fixture has a trailing body `None`; reaching it cleanly proves
+    // `_listDepth` returned to baseline after the inner None.
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  // ───────────────────────── Phase 2 — scalar arrays ──────────────────────────
+
+  it('decodes a UInt32Property[7] ArrayProperty end-to-end with one read per element', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + PRIMITIVE_ARRAY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(PRIMITIVE_ARRAY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let openArrayName: string | null = null;
+    let itemCountTagHeader: number | null = null;
+    const intReads: number[] = [];
+    let sawCloseAfterIntReads = false;
+    let sawBodyTerminator = false;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'openArray' && step.name === 'Lockid') {
+        openArrayName = step.name;
+      } else if (step.kind === 'tagHeader' && step.field === 'itemCount') {
+        itemCountTagHeader = step.value as number;
+      } else if (
+        step.kind === 'read'
+        && step.opcode === 'FixInt32'
+        && openArrayName !== null
+        && intReads.length < EXPECTED_LOCKID_VALUES.length
+      ) {
+        intReads.push(step.value as number);
+      } else if (
+        step.kind === 'close'
+        && intReads.length === EXPECTED_LOCKID_VALUES.length
+        && !sawCloseAfterIntReads
+      ) {
+        sawCloseAfterIntReads = true;
+      } else if (step.kind === 'propNone') {
+        sawBodyTerminator = true;
+      }
+    }
+
+    expect(openArrayName).toBe('Lockid');
+    expect(itemCountTagHeader).toBe(EXPECTED_LOCKID_VALUES.length);
+    expect(intReads).toEqual([...EXPECTED_LOCKID_VALUES]);
+    expect(sawCloseAfterIntReads).toBe(true);
+    expect(sawBodyTerminator).toBe(true);
+    expect(decoder.position).toBe(buffer.length);
+
+    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    expect(body.Lockid).toEqual([...EXPECTED_LOCKID_VALUES]);
+  });
+
+  it('decodes a NameProperty[6] ArrayProperty including a literal "None" element without confusing the tag-name terminator', () => {
+    const { body, decoder, totalBytes } = decodeBody(NAME_ARRAY_FIXTURE);
+
+    expect(body.ItemQuickSlot).toEqual([...EXPECTED_ITEM_QUICK_SLOT_VALUES]);
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes an empty ArrayProperty (itemCount=0) without pushing an arrayIter frame', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + EMPTY_ARRAY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(EMPTY_ARRAY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let itemCount: number | null = null;
+    let openArraySeen = false;
+    let elementReadsAfterOpenArray = 0;
+    let closeAfterOpenArray = false;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'tagHeader' && step.field === 'itemCount') {
+        itemCount = step.value as number;
+      } else if (step.kind === 'openArray' && step.name === 'EmptyArr') {
+        openArraySeen = true;
+      } else if (step.kind === 'read' && openArraySeen && !closeAfterOpenArray) {
+        elementReadsAfterOpenArray += 1;
+      } else if (step.kind === 'close' && openArraySeen && !closeAfterOpenArray) {
+        closeAfterOpenArray = true;
+      }
+    }
+
+    expect(itemCount).toBe(0);
+    expect(openArraySeen).toBe(true);
+    expect(elementReadsAfterOpenArray).toBe(0);
+    expect(closeAfterOpenArray).toBe(true);
+    expect(decoder.position).toBe(buffer.length);
+
+    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    expect(body.EmptyArr).toEqual([]);
+  });
+
+  it('handles a StructProperty[N] ArrayProperty as an out-of-scope fallback that keeps the reader in sync', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + STRUCT_ARRAY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(STRUCT_ARRAY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let saw_skipBytes = false;
+    let skipBytesCount = 0;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'read' && step.opcode === 'SkipBytes') {
+        saw_skipBytes = true;
+        skipBytesCount += 1;
+      }
+    }
+
+    expect(saw_skipBytes).toBe(true);
+    expect(skipBytesCount).toBe(1);
+    expect(decoder.position).toBe(buffer.length);
+
+    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    const arr = body.StructArr;
+    expect(Array.isArray(arr)).toBe(true);
+    // Placeholder element from the SkipBytes read step lands inside the array.
+    expect((arr as unknown[]).length).toBe(1);
+    expect(typeof (arr as unknown[])[0]).toBe('string');
+    expect((arr as unknown[])[0]).toBe(`<skipped:${STRUCT_ARRAY_PAYLOAD_BYTES}>`);
+  });
+
+  // ──────────────────────── Phase 3 — MapProperty ─────────────────────────────
+
+  it('decodes a Map<Name, Float> end-to-end and stamps the ENTITY symbol on the container', () => {
+    const { body, decoder, totalBytes } = decodeBody(MAP_NAME_FLOAT_FIXTURE);
+
+    const map = body.DataMap_float as Record<string, unknown>;
+    expect(map).toBeDefined();
+    for (const [k, v] of Object.entries(EXPECTED_MAP_NAME_FLOAT)) {
+      expect(map[k]).toBeCloseTo(v, 5);
+    }
+    // ENTITY marker is invisible to string-key enumeration.
+    expect(Object.keys(map).sort()).toEqual(Object.keys(EXPECTED_MAP_NAME_FLOAT).sort());
+    expect((map as unknown as { [ENTITY]?: string })[ENTITY]).toBe('map');
+    expect(JSON.parse(JSON.stringify(map))).not.toHaveProperty('Symbol(stelar.entity)');
+
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes a Map<Name, Struct> with two entries; container is map, each value is struct', () => {
+    const { body, decoder, totalBytes } = decodeBody(MAP_NAME_STRUCT_FIXTURE);
+
+    const map = body.MyMap as Record<string, unknown>;
+    expect(map).toBeDefined();
+    expect((map as unknown as { [ENTITY]?: string })[ENTITY]).toBe('map');
+    for (const [k, expected] of Object.entries(EXPECTED_MAP_NAME_STRUCT)) {
+      const entry = map[k] as Record<string, unknown>;
+      expect(entry).toBeDefined();
+      expect((entry as unknown as { [ENTITY]?: string })[ENTITY]).toBe('struct');
+      expect(entry.HP).toBeCloseTo(expected.HP, 5);
+    }
+    expect(Object.keys(map).sort()).toEqual(Object.keys(EXPECTED_MAP_NAME_STRUCT).sort());
+
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes an empty Map<Int, Int> with no element steps between OpenMap and Close', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + MAP_INT_INT_EMPTY_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(MAP_INT_INT_EMPTY_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let openMapSeen = false;
+    let entryCountTagHeader: number | null = null;
+    let elementStepsAfterOpenMap = 0;
+    let sawCloseAfterOpenMap = false;
+
+    while (decoder.canStep) {
+      const step = assembler.step()!;
+      if (step.kind === 'tagHeader' && step.field === 'entryCount') {
+        entryCountTagHeader = step.value as number;
+      } else if (step.kind === 'openMap' && step.name === 'TaskValueMap') {
+        openMapSeen = true;
+      } else if (openMapSeen && !sawCloseAfterOpenMap) {
+        if (step.kind === 'close') {
+          sawCloseAfterOpenMap = true;
+        } else if (step.kind !== 'tagHeader') {
+          // tagHeader rows (mapKey) would prove an entry started — none should
+          // appear between OpenMap and Close for an empty map.
+          elementStepsAfterOpenMap += 1;
+        }
+      }
+    }
+
+    expect(entryCountTagHeader).toBe(0);
+    expect(openMapSeen).toBe(true);
+    expect(elementStepsAfterOpenMap).toBe(0);
+    expect(sawCloseAfterOpenMap).toBe(true);
+    expect(decoder.position).toBe(buffer.length);
+
+    const assembledBody = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
+    const map = assembledBody.TaskValueMap as Record<string, unknown>;
+    expect(Object.keys(map)).toEqual([]);
+    expect((map as unknown as { [ENTITY]?: string })[ENTITY]).toBe('map');
+  });
+
+  it('decodes a Map<Int, Struct> end-to-end with stringified integer keys', () => {
+    const { body, decoder, totalBytes } = decodeBody(MAP_INT_STRUCT_FIXTURE);
+
+    const map = body.Equipment as Record<string, unknown>;
+    expect(map).toBeDefined();
+    expect((map as unknown as { [ENTITY]?: string })[ENTITY]).toBe('map');
+    for (const [k, expected] of Object.entries(EXPECTED_MAP_INT_STRUCT)) {
+      const entry = map[k] as Record<string, unknown>;
+      expect(entry).toBeDefined();
+      expect((entry as unknown as { [ENTITY]?: string })[ENTITY]).toBe('struct');
+      expect(entry.HP).toBeCloseTo(expected.HP, 5);
+    }
+
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('emits tagHeader(mapKey) -> openStruct -> inner reads -> propNone per entry for Map<Name, Struct>', () => {
+    const header = loadHeaderThroughSaveClass();
+    const buffer = new Uint8Array(header.length + MAP_NAME_STRUCT_FIXTURE.length);
+    buffer.set(header, 0);
+    buffer.set(MAP_NAME_STRUCT_FIXTURE, header.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    const steps: DecodeStepRow[] = [];
+    while (decoder.canStep) {
+      const s = assembler.step();
+      if (s) steps.push(s);
+    }
+
+    const openMapIdx = steps.findIndex(
+      (s) => s.kind === 'openMap' && s.name === 'MyMap',
+    );
+    expect(openMapIdx).toBeGreaterThan(-1);
+
+    const expectedKeys = Object.keys(EXPECTED_MAP_NAME_STRUCT);
+    let scan = openMapIdx + 1;
+    for (const expectedKey of expectedKeys) {
+      const keyRow = steps[scan++];
+      expect(keyRow.kind).toBe('tagHeader');
+      if (keyRow.kind === 'tagHeader') {
+        expect(keyRow.field).toBe('mapKey');
+        expect(keyRow.value).toBe(expectedKey);
+      }
+      const openStruct = steps[scan++];
+      expect(openStruct).toEqual({ kind: 'openStruct', name: expectedKey });
+      let propNoneIdx = -1;
+      for (let j = scan; j < steps.length; j++) {
+        if (steps[j].kind === 'propNone') {
+          propNoneIdx = j;
+          break;
+        }
+        // Sanity: no openMap/openStruct should appear inside a {HP:Float}
+        // entry before its PropNone.
+        const k = steps[j].kind;
+        expect(k === 'openMap' || k === 'openStruct').toBe(false);
+      }
+      expect(propNoneIdx).toBeGreaterThan(-1);
+      scan = propNoneIdx + 1;
+    }
+
+    const closeRow = steps[scan];
+    expect(closeRow?.kind).toBe('close');
   });
 });

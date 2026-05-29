@@ -7,6 +7,11 @@
 
   let { rows = [] }: Props = $props();
 
+  const MAX_VISIBLE = 100;
+  let visibleRows = $derived(rows.length > MAX_VISIBLE ? rows.slice(-MAX_VISIBLE) : rows);
+  let visibleOffset = $derived(rows.length > MAX_VISIBLE ? rows.length - MAX_VISIBLE : 0);
+  let isTruncated = $derived(rows.length > MAX_VISIBLE);
+
   let scrollEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
@@ -125,10 +130,10 @@
           </tr>
         </thead>
         <tbody>
-          {#each rows as row, i (i)}
+          {#each visibleRows as row, i (visibleOffset + i)}
             <tr class="step-row">
               <td class="col-idx">
-                <span class="row-idx">{i + 1}</span>
+                <span class="row-idx">{visibleOffset + i + 1}</span>
               </td>
               <td class="col-opcode">
                 <span class="opcode {opcodeClass(row)}">{stepLabel(row)}</span>
@@ -161,7 +166,13 @@
   </div>
 
   {#if rows.length > 0}
-    <p class="table-meta">{rows.length} step{rows.length === 1 ? '' : 's'}</p>
+    <p class="table-meta">
+      {#if isTruncated}
+        showing last {MAX_VISIBLE} of {rows.length} steps
+      {:else}
+        {rows.length} step{rows.length === 1 ? '' : 's'}
+      {/if}
+    </p>
   {/if}
 </div>
 
@@ -172,7 +183,7 @@
     gap: 0.5rem;
     flex: 1;
     min-height: 0;
-    max-height: 900px;
+    max-height: 800px;
   }
 
   .table-shell {

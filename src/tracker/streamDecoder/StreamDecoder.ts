@@ -3,9 +3,15 @@ import { BinaryReader } from 'tracker/binaryReader/BinaryReader';
 import { toHex } from 'tracker/decoder/decoder';
 import { RingBuffer } from 'tracker/ringBuffer/RingBuffer';
 import { Opcode, OPCODE_NAMES } from 'tracker/ringBuffer/Opcodes';
-import type { ParseFrame } from './ParseFrames';
+import type { ParseFrame, ArrayIterElement } from './ParseFrames';
 
-type OpcodeHandler = () => DecodeStepRow;
+/**
+ * Handlers may return `null` to signal a *scheduler* opcode that pushes
+ * further opcodes into the ring buffer but produces no visible step row
+ * (e.g. `CustomVersionEntry`). `next()` drains scheduler opcodes
+ * transparently and only returns the next concrete row.
+ */
+type OpcodeHandler = () => DecodeStepRow | null;
 
 function defineOpcodeHandlers(
   handlers: { [K in Opcode]: OpcodeHandler },
@@ -26,6 +32,18 @@ type TagState = {
   itemType: string;
   keyType: string;
   valueType: string;
+  /**
+   * Element count for `ArrayProperty` Values. Populated by the `ArrayCount`
+   * opcode handler after reading the leading Int32; not part of the wire-side
+   * tag header. Reset by `makeEmptyTag()` between properties.
+   */
+  itemCount: number;
+  /**
+   * Entry count for `MapProperty` Values. Populated by the `MapCount` opcode
+   * handler after the 4-byte padding + Int32 EntryCount; not part of the
+   * wire-side tag header. Reset by `makeEmptyTag()` between properties.
+   */
+  entryCount: number;
 };
 
 const NONE_TAG_NAME = 'None';
@@ -35,6 +53,19 @@ export class StreamDecoder {
   private _state: RingBuffer;
   private _lastYieldName: string | null = null;
   private _customVersionCount = 0;
+  /**
+   * Index of the *next* `CustomVersionEntry` opcode to fire. Reset when the
+   * customVersions block is scheduled in `handleOpenArray`. Each
+   * `handleCustomVersionEntry` call snapshots this into
+   * `_currentCustomVersionIndex` and increments it by one.
+   */
+  private _customVersionNextIndex = 0;
+  /**
+   * Index stamped onto the six sub-rows emitted by the currently in-flight
+   * `CustomVersionEntry`. `null` outside of an entry; cleared by the
+   * trailing `close` row of the entry.
+   */
+  private _currentCustomVersionIndex: number | null = null;
   private readonly _frames: ParseFrame[] = [];
   private _tag: TagState = StreamDecoder.makeEmptyTag();
   /**
@@ -56,6 +87,7 @@ export class StreamDecoder {
     [Opcode.FieldFloat32]: () => this.handleFieldFloat32(),
     [Opcode.FieldDouble64]: () => this.handleFieldDouble64(),
     [Opcode.FieldByte]: () => this.handleFieldByte(),
+    [Opcode.FieldInt8]: () => this.handleFieldInt8(),
     [Opcode.ValBool]: () => this.handleValBool(),
     [Opcode.YieldName]: () => this.handleYieldName(),
     [Opcode.OpenStruct]: () => this.handleOpenStruct(),
@@ -78,6 +110,10 @@ export class StreamDecoder {
     [Opcode.TagItemType]: () => this.handleTagItemType(),
     [Opcode.TagKeyType]: () => this.handleTagKeyType(),
     [Opcode.TagValueType]: () => this.handleTagValueType(),
+    [Opcode.ArrayCount]: () => this.handleArrayCount(),
+    [Opcode.CustomVersionEntry]: () => this.handleCustomVersionEntry(),
+    [Opcode.MapCount]: () => this.handleMapCount(),
+    [Opcode.MapEntry]: () => this.handleMapEntry(),
   });
 
   constructor(reader: BinaryReader) {
@@ -98,11 +134,34 @@ export class StreamDecoder {
     return this._reader.size;
   }
 
+  /**
+   * Number of active iteration frames (`arrayIter` / `mapIter`). A non-zero
+   * value means a step-loop driver is currently *inside* one or more
+   * arrays/maps. The UI uses this to enable a "skip to end of current
+   * iteration" control so users don't have to advance through every
+   * element of a large container by hand.
+   */
+  public get framesDepth(): number {
+    return this._frames.length;
+  }
+
+  /**
+   * Discriminator of the innermost iteration frame, or `null` when no
+   * iteration is active. Lets the UI label its "skip" affordance with
+   * the right noun (`"array"` vs `"map"`).
+   */
+  public get currentIterKind(): 'arrayIter' | 'mapIter' | null {
+    const top = this._frames[this._frames.length - 1];
+    return top ? top.kind : null;
+  }
+
   public reset(): void {
     this._reader.seek(0);
     this._state = RingBuffer.create(1024);
     this._lastYieldName = null;
     this._customVersionCount = 0;
+    this._customVersionNextIndex = 0;
+    this._currentCustomVersionIndex = null;
     this._frames.length = 0;
     this._tag = StreamDecoder.makeEmptyTag();
     this._listDepth = 0;
@@ -123,8 +182,30 @@ export class StreamDecoder {
       itemType: '',
       keyType: '',
       valueType: '',
+      itemCount: 0,
+      entryCount: 0,
     };
   }
+
+  /**
+   * Opcodes that count as one consumed `ArrayProperty` element when an
+   * `arrayIter` frame is on top of the stack. Must mirror the dispatch table
+   * in `enqueueArrayElement()`. Anything else (`OpenArray`, `Close`,
+   * `TagName`, ...) is ignored by the post-step hook.
+   *
+   * Body primitive arrays are the only remaining iter-frame caller — the
+   * GVAS-header `customVersions` block is now scheduled inline via the
+   * `CustomVersionEntry` opcode and never pushes an iter frame.
+   */
+  private static readonly _arrayElementOpcodes: ReadonlySet<Opcode> = new Set([
+    Opcode.FixInt32,
+    Opcode.FieldInt64,
+    Opcode.FieldFloat32,
+    Opcode.FieldDouble64,
+    Opcode.FieldByte,
+    Opcode.FieldInt8,
+    Opcode.FieldString,
+  ]);
 
   private initializeState(): void {
     this._state.yieldName('stelarHeader');
@@ -152,71 +233,118 @@ export class StreamDecoder {
     this._state.yieldName('customVersionCount');
     this._state.fixInt32(1);
     this._state.openArray('customVersions');
+    // The post-customVersions trailing program (saveClassName/enterBody) is
+    // pushed by the iter frame's `trailingOpcodes` callback (or, for an
+    // empty customVersions array, inline by `handleOpenArray`). Pushing it
+    // here would interleave incorrectly with the per-element opcodes that
+    // `advanceArrayIter` lazily appends at the tail of the FIFO queue.
+  }
+
+  private enqueueHeaderTrailing(): void {
     this._state.yieldName('saveClassName');
     this._state.fieldString();
     this._state.enterBody();
   }
 
   public next(): DecodeStepRow {
-    if (this._frames.length > 0) {
-      const top = this._frames[this._frames.length - 1]!;
-      if (top.kind === 'customVersions') {
-        return this.dispatchCustomVersions(top);
+    while (this.canStep) {
+      const opcode = this._state.decode();
+      const handler = this._opcodeHandlers[opcode];
+
+      if (handler === undefined) {
+        throw new Error(`Unknown opcode identifier ${opcode}`);
       }
+
+      const row = handler();
+      if (row === null) {
+        // Scheduler opcode (e.g. CustomVersionEntry): produced no visible row,
+        // only pushed more opcodes into the ring buffer. Drain and continue.
+        continue;
+      }
+      this.decorateWithCustomVersionIndex(row);
+      this.advancePropertyIter(opcode);
+      return row;
     }
-
-    const opcode = this._state.decode();
-    const handler = this._opcodeHandlers[opcode];
-
-    if (handler === undefined) {
-      throw new Error(`Unknown opcode identifier ${opcode}`);
-    }
-
-    return handler();
+    throw new Error('next() called with no available opcodes or frames');
   }
 
   /**
-   * Header customVersions: 56 entries of `{guid: GUID, version: Int32}`.
-   * Item layout is hardcoded here (not driven by a schema map) and emits the
-   * same event sequence the assembler already understands.
+   * Post-step hook for `ArrayProperty` and `MapProperty` iteration. Runs
+   * after every opcode handler.
+   *
+   * - `arrayIter`: boundary is any opcode in `_arrayElementOpcodes` (one
+   *   read per element). On boundary, decrement `remaining` and either
+   *   re-enqueue the next element template or tear down the array
+   *   (`Close` + parent `TagName`).
+   * - `mapIter`: boundary depends on `valueType`:
+   *   - `StructProperty`: `PropNone` opcode AND `_listDepth ===
+   *     entryStartListDepth` (the inner None just popped the entry's
+   *     struct container, so the value is fully consumed).
+   *   - Primitive value: same primitive-read set as arrays.
+   *   On boundary, decrement `remaining` and chain another `MapEntry`
+   *   scheduler or tear down the map (`Close` + parent `TagName`).
    */
-  private dispatchCustomVersions(frame: ParseFrame & { kind: 'customVersions' }): DecodeStepRow {
-    if (frame.index >= frame.count) {
-      this._frames.pop();
-      return { kind: 'close' };
+  private advancePropertyIter(executed: Opcode): void {
+    const top = this._frames[this._frames.length - 1];
+    if (!top) {
+      return;
     }
 
-    switch (frame.phase) {
-      case 'open': {
-        frame.phase = 'guidName';
-        return { kind: 'openStruct', name: '', index: frame.index };
+    if (top.kind === 'arrayIter') {
+      if (!StreamDecoder._arrayElementOpcodes.has(executed)) {
+        return;
       }
-      case 'guidName': {
-        frame.phase = 'guid';
-        return { kind: 'yieldName', name: 'guid', index: frame.index };
+      top.remaining -= 1;
+      if (top.remaining > 0) {
+        this.enqueueArrayElement(top.element);
+      } else {
+        this._frames.pop();
+        this._state.close();
+        this._state.tagName();
       }
-      case 'guid': {
-        const start = this._reader.position;
-        const value = this._reader.readGUID();
-        frame.phase = 'versionName';
-        return this.readStep(Opcode.FieldGuid, '', value, start, frame.index);
-      }
-      case 'versionName': {
-        frame.phase = 'version';
-        return { kind: 'yieldName', name: 'version', index: frame.index };
-      }
-      case 'version': {
-        const start = this._reader.position;
-        const value = this._reader.readInt32();
-        frame.phase = 'close';
-        return this.readStep(Opcode.FixInt32, '1', value, start, frame.index);
-      }
-      case 'close': {
-        const closedIndex = frame.index;
-        frame.index++;
-        frame.phase = 'open';
-        return { kind: 'close', index: closedIndex };
-      }
+      return;
+    }
+
+    // top.kind === 'mapIter'
+    const isStructValueBoundary = top.valueType === 'StructProperty'
+      && executed === Opcode.PropNone
+      && this._listDepth === top.entryStartListDepth;
+    const isPrimitiveValueBoundary = top.valueType !== 'StructProperty'
+      && StreamDecoder._arrayElementOpcodes.has(executed);
+
+    if (!isStructValueBoundary && !isPrimitiveValueBoundary) {
+      return;
+    }
+
+    top.remaining -= 1;
+    if (top.remaining > 0) {
+      this._state.mapEntry();
+    } else {
+      this._frames.pop();
+      this._state.close();
+      this._state.tagName();
+    }
+  }
+
+  /**
+   * Stamps the current custom-version entry index onto each sub-row emitted
+   * by the in-flight `CustomVersionEntry`. The entry's terminating `close`
+   * row also clears the per-entry index so subsequent rows are untagged.
+   */
+  private decorateWithCustomVersionIndex(row: DecodeStepRow): void {
+    if (this._currentCustomVersionIndex === null) {
+      return;
+    }
+    switch (row.kind) {
+      case 'openStruct':
+      case 'yieldName':
+      case 'read':
+        row.index = this._currentCustomVersionIndex;
+        break;
+      case 'close':
+        row.index = this._currentCustomVersionIndex;
+        this._currentCustomVersionIndex = null;
+        break;
     }
   }
 
@@ -235,16 +363,56 @@ export class StreamDecoder {
 
     if (name === 'customVersions') {
       const count = this._customVersionCount;
-      this._frames.push({
-        kind: 'customVersions',
-        count,
-        index: 0,
-        phase: 'open',
-      });
+      this._customVersionNextIndex = 0;
+      // GVAS header customVersions is a fully-known, fixed-shape block:
+      // N x { GUID(16), Int32 }. Schedule it inline by pushing one
+      // CustomVersionEntry; the handler chains itself N times and the
+      // last invocation tail-pushes close + the post-header trailing
+      // opcodes. No arrayIter frame, no trailing-op closure.
+      if (count > 0) {
+        this._state.customVersionEntry();
+      } else {
+        this._state.close();
+        this.enqueueHeaderTrailing();
+      }
       return { kind: 'openArray', name, count };
     }
 
     return { kind: 'openArray', name };
+  }
+
+  /**
+   * Scheduler opcode for one GVAS-header custom-version entry. Snapshots
+   * the next entry index, pushes the six sub-opcodes that materialize
+   * `{ guid: GUID(16), version: Int32(4) }`, then either chains the next
+   * `CustomVersionEntry` (entries remaining) or tail-pushes the array
+   * `close` and the post-header trailing opcodes (last entry). Returns
+   * `null` so `next()` drains it transparently; the emitted sub-rows are
+   * stamped with the snapshot index by `decorateWithCustomVersionIndex`.
+   *
+   * Self-chaining is necessary because the RingBuffer is FIFO: pushing
+   * all N schedulers up-front would interleave their sub-ops AFTER the
+   * already-queued close+trailing, desynchronizing the reader.
+   */
+  private handleCustomVersionEntry(): null {
+    this._currentCustomVersionIndex = this._customVersionNextIndex;
+    this._customVersionNextIndex += 1;
+
+    this._state.openStruct('');
+    this._state.yieldName('guid');
+    this._state.fieldGuid();
+    this._state.yieldName('version');
+    this._state.fixInt32(1);
+    this._state.close();
+
+    if (this._customVersionNextIndex < this._customVersionCount) {
+      this._state.customVersionEntry();
+    } else {
+      this._state.close();
+      this.enqueueHeaderTrailing();
+    }
+
+    return null;
   }
 
   private handleOpenMap(): Extract<DecodeStepRow, { kind: 'openMap' }> {
@@ -267,26 +435,31 @@ export class StreamDecoder {
   }
 
   private handleFixInt32(): Extract<DecodeStepRow, { kind: 'read' }> {
+    // `int16` is the in-program count argument. The codebase only ever emits
+    // `fixInt32(1)` so we assert it inline rather than maintain a dead batch
+    // path. Lift this when a real multi-int site appears.
     const count = this._state.int16();
+    if (count !== 1) {
+      throw new Error(`FixInt32 count must be 1, got ${count}`);
+    }
     const start = this._reader.position;
-    const value = count === 1
-      ? this._reader.readInt32()
-      : this.readInt32Batch(count);
+    const value = this._reader.readInt32();
 
-    if (this._lastYieldName === 'customVersionCount' && count === 1) {
-      this._customVersionCount = value as number;
+    if (this._lastYieldName === 'customVersionCount') {
+      this._customVersionCount = value;
     }
 
-    return this.readStep(Opcode.FixInt32, String(count), value, start);
+    return this.readStep(Opcode.FixInt32, '1', value, start);
   }
 
   private handleFixUint16(): Extract<DecodeStepRow, { kind: 'read' }> {
     const count = this._state.int16();
+    if (count !== 1) {
+      throw new Error(`FixUint16 count must be 1, got ${count}`);
+    }
     const start = this._reader.position;
-    const value = count === 1
-      ? this._reader.readUint16()
-      : this.readUint16Batch(count);
-    return this.readStep(Opcode.FixUint16, String(count), value, start);
+    const value = this._reader.readUint16();
+    return this.readStep(Opcode.FixUint16, '1', value, start);
   }
 
   private handleFieldString(): Extract<DecodeStepRow, { kind: 'read' }> {
@@ -323,6 +496,12 @@ export class StreamDecoder {
     const start = this._reader.position;
     const value = this._reader.readByte();
     return this.readStep(Opcode.FieldByte, '', value, start);
+  }
+
+  private handleFieldInt8(): Extract<DecodeStepRow, { kind: 'read' }> {
+    const start = this._reader.position;
+    const value = this._reader.readInt8();
+    return this.readStep(Opcode.FieldInt8, '', value, start);
   }
 
   /** ValBool emits the cached BoolProperty value without consuming wire bytes. */
@@ -382,7 +561,17 @@ export class StreamDecoder {
       this._listDepth--;
       // If a parent property list is still open, resume it by enqueuing
       // another TagName *after* the PropNone has popped the inner container.
-      if (this._listDepth > 0) {
+      // Exception: when the None terminates a MapProperty entry's
+      // StructProperty value, the next wire bytes are the next entry's KEY
+      // (not a property tag header). `advancePropertyIter` on the upcoming
+      // PropNone will chain the next `MapEntry` scheduler or tear down the
+      // map; pushing a parent TagName here would desync on the key bytes.
+      const top = this._frames[this._frames.length - 1];
+      const isMapStructEntryNone = top !== undefined
+        && top.kind === 'mapIter'
+        && top.valueType === 'StructProperty'
+        && this._listDepth === top.entryStartListDepth;
+      if (this._listDepth > 0 && !isMapStructEntryNone) {
         this._state.tagName();
       }
       return this.tagHeaderStep('name', name, start);
@@ -562,16 +751,18 @@ export class StreamDecoder {
         break;
       case 'StructProperty':
         this._state.yieldName(propName);
-        this._state.openStruct(this._tag.structType);
-        // Enter a nested property list. The list's terminating `None` (via
-        // handleTagName) decrements `_listDepth` and re-enqueues a `TagName`
-        // for the parent list — pre-queueing it here would put it ahead of
-        // the inner property's metadata in the FIFO queue.
-        this._listDepth++;
-        this._state.tagName();
+        this.enqueueStructValueSequence(propName, this._tag.structType);
+        return;
+      case 'ArrayProperty':
+        this._state.yieldName(propName);
+        this._state.arrayCount();
+        return;
+      case 'MapProperty':
+        this._state.yieldName(propName);
+        this._state.mapCount();
         return;
       default:
-        // ArrayProperty, MapProperty, SetProperty, TextProperty, unknown:
+        // SetProperty, TextProperty, unknown:
         // emit the field with a placeholder and skip its `size` bytes.
         this._state.yieldName(propName);
         this._state.skipBytes(size);
@@ -579,6 +770,326 @@ export class StreamDecoder {
     }
 
     this._state.tagName();
+  }
+
+  /**
+   * StructProperty value layout depends on `StructType`:
+   *
+   * - Specialized fixed-layout types (`Vector`, `Rotator`, `Quat`,
+   *   `LinearColor`, `Guid`, `DateTime`) are raw bytes — they do NOT enter a
+   *   nested property list. The decoder reads them directly and explicitly
+   *   re-enqueues a `TagName` to resume the parent property list.
+   * - All other `StructType`s are treated as a generic property list ending
+   *   in `None`. The terminating `None` (via `handleTagName`) decrements
+   *   `_listDepth` and re-enqueues the parent `TagName` itself, so we do NOT
+   *   tail-enqueue one here.
+   *
+   * `propName` (not `structType`) is the assembler key in every branch.
+   */
+  private enqueueStructValueSequence(propName: string, structType: string): void {
+    switch (structType) {
+      case 'Vector':
+        this._state.openStruct(propName);
+        this._state.yieldName('x'); this._state.fieldFloat32();
+        this._state.yieldName('y'); this._state.fieldFloat32();
+        this._state.yieldName('z'); this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'Rotator':
+        this._state.openStruct(propName);
+        this._state.yieldName('pitch'); this._state.fieldFloat32();
+        this._state.yieldName('yaw');   this._state.fieldFloat32();
+        this._state.yieldName('roll');  this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'Quat':
+        this._state.openStruct(propName);
+        this._state.yieldName('x'); this._state.fieldFloat32();
+        this._state.yieldName('y'); this._state.fieldFloat32();
+        this._state.yieldName('z'); this._state.fieldFloat32();
+        this._state.yieldName('w'); this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'LinearColor':
+        this._state.openStruct(propName);
+        this._state.yieldName('r'); this._state.fieldFloat32();
+        this._state.yieldName('g'); this._state.fieldFloat32();
+        this._state.yieldName('b'); this._state.fieldFloat32();
+        this._state.yieldName('a'); this._state.fieldFloat32();
+        this._state.close();
+        this._state.tagName();
+        return;
+
+      case 'Guid':
+        this._state.fieldGuid();
+        this._state.tagName();
+        return;
+
+      case 'DateTime':
+        this._state.fieldInt64();
+        this._state.tagName();
+        return;
+
+      default:
+        this._state.openStruct(propName);
+        this._listDepth++;
+        this._state.tagName();
+        return;
+    }
+  }
+
+  /**
+   * Reads the leading `Int32 ItemCount` of an `ArrayProperty` Value and
+   * dispatches:
+   *
+   * - `StructProperty` items (out-of-scope for Phase 2): open a placeholder
+   *   array, emit a `SkipBytes` over `Tag.Size - 4` bytes (the InnerTag and
+   *   item bodies), then close. The placeholder element keeps the assembler
+   *   `_pendingName` consumed by the array container; the `<skipped:N>`
+   *   string lands inside the array.
+   * - All other primitive / FString-shaped items: open the array; if count
+   *   is zero, emit `Close + TagName` directly. Otherwise push an
+   *   `arrayIter` frame and enqueue the first element opcode — subsequent
+   *   elements are queued lazily by `advanceArrayIter()` after each element
+   *   read, and the final element triggers `Close + TagName` from the same
+   *   hook.
+   *
+   * Emits a `tagHeader{field:'itemCount'}` step so the UI/log can surface the
+   * count inline with the other tag-header rows.
+   */
+  private handleArrayCount(): DecodeStepRow {
+    const start = this._reader.position;
+    const n = this._reader.readInt32();
+    this._tag.itemCount = n;
+
+    const propName = this._tag.name;
+    const itemType = this._tag.itemType;
+
+    if (itemType === 'StructProperty') {
+      const consumedInsideValue = this._reader.position - start;
+      const remainingBytes = this._tag.size - consumedInsideValue;
+      this._state.openArray(propName);
+      if (remainingBytes > 0) {
+        this._state.skipBytes(remainingBytes);
+      }
+      this._state.close();
+      this._state.tagName();
+    } else {
+      this._state.openArray(propName);
+      if (n === 0) {
+        this._state.close();
+        this._state.tagName();
+      } else {
+        const element: ArrayIterElement = { itemType };
+        this._frames.push({
+          kind: 'arrayIter',
+          remaining: n,
+          totalCount: n,
+          element,
+        });
+        this.enqueueArrayElement(element);
+      }
+    }
+
+    return this.tagHeaderStep('itemCount', n, start);
+  }
+
+  /**
+   * Enqueue one body primitive-array element opcode. Boundary detection in
+   * `advanceArrayIter()` pairs with this single read.
+   *
+   * Per `gvas-format.mdc`, primitive arrays carry no per-element metadata —
+   * `BoolProperty` items are raw bytes (not the 0-size + `BoolVal` form used
+   * at the property-tag level), and `ByteProperty` items are raw bytes
+   * regardless of `EnumName`. That keeps the wire-side invariant simple:
+   * every primitive item is exactly N bytes, every FString-shaped item is
+   * one length-prefixed string.
+   */
+  private enqueueArrayElement(element: ArrayIterElement): void {
+    switch (element.itemType) {
+      case 'IntProperty':
+      case 'UInt32Property':
+        this._state.fixInt32(1);
+        return;
+      case 'Int64Property':
+        this._state.fieldInt64();
+        return;
+      case 'FloatProperty':
+        this._state.fieldFloat32();
+        return;
+      case 'DoubleProperty':
+        this._state.fieldDouble64();
+        return;
+      case 'BoolProperty':
+      case 'ByteProperty':
+        this._state.fieldByte();
+        return;
+      case 'NameProperty':
+      case 'StrProperty':
+      case 'EnumProperty':
+        this._state.fieldString();
+        return;
+      default:
+        throw new Error(`Unsupported ArrayProperty ItemType: ${element.itemType}`);
+    }
+  }
+
+  /**
+   * Reads the leading 4-byte padding + Int32 `EntryCount` of a
+   * `MapProperty` Value and opens the map container. Either pushes a
+   * `mapIter` frame and one `MapEntry` opcode (entries > 0) or
+   * short-circuits to `close + tagName` (empty map). Emits a
+   * `tagHeader{field:'entryCount'}` row so the byte log surfaces the
+   * count inline with other tag-header rows.
+   *
+   * The 4-byte padding is observed as `00 00 00 00` in every `SBS00.sav`
+   * map; a non-zero value is surfaced via `console.warn` but not treated
+   * as fatal.
+   */
+  private handleMapCount(): DecodeStepRow {
+    const start = this._reader.position;
+    const padding = this._reader.readInt32();
+    if (padding !== 0) {
+      console.warn(
+        `MapProperty padding expected 0, got ${padding} at offset 0x${start.toString(16)}`,
+      );
+    }
+    const n = this._reader.readInt32();
+    this._tag.entryCount = n;
+
+    const propName = this._tag.name;
+    const keyType = this._tag.keyType;
+    const valueType = this._tag.valueType;
+
+    this._state.openMap(propName);
+    if (n === 0) {
+      this._state.close();
+      this._state.tagName();
+    } else {
+      this._frames.push({
+        kind: 'mapIter',
+        remaining: n,
+        totalCount: n,
+        keyType,
+        valueType,
+        propName,
+        entryStartListDepth: this._listDepth,
+      });
+      this._state.mapEntry();
+    }
+
+    return this.tagHeaderStep('entryCount', n, start);
+  }
+
+  /**
+   * Scheduler opcode for one `MapProperty` entry. Reads the key from the
+   * wire per the active `mapIter` frame's `keyType`, emits a
+   * `tagHeader{field:'mapKey'}` row carrying the key bytes (so the byte
+   * log accounts for the key's wire consumption), then pushes the
+   * value-reading opcodes:
+   *
+   * - primitive ValueType: `yieldName(keyStr) + <primitive read>`
+   * - `StructProperty` value: `openStruct(keyStr) + _listDepth++ + tagName`
+   *
+   * The next entry (or map tear-down) is queued by `advancePropertyIter`
+   * after the value boundary opcode fires.
+   */
+  private handleMapEntry(): DecodeStepRow {
+    const top = this._frames[this._frames.length - 1];
+    if (!top || top.kind !== 'mapIter') {
+      throw new Error('MapEntry without mapIter frame');
+    }
+
+    const keyStart = this._reader.position;
+    const keyStr = this.readMapKey(top.keyType, keyStart);
+
+    switch (top.valueType) {
+      case 'StructProperty':
+        // Struct value: open the entry sub-object keyed by the
+        // stringified map key, then enter its nested property list.
+        // The inner `None` will decrement `_listDepth` back to
+        // `entryStartListDepth`; `handleTagName`'s None gate uses that
+        // to suppress the parent-TagName re-enqueue, and
+        // `advancePropertyIter` uses the same condition to detect the
+        // entry's `PropNone` as the boundary.
+        this._state.openStruct(keyStr);
+        this._listDepth++;
+        this._state.tagName();
+        break;
+      case 'IntProperty':
+      case 'UInt32Property':
+        this._state.yieldName(keyStr);
+        this._state.fixInt32(1);
+        break;
+      case 'Int64Property':
+        this._state.yieldName(keyStr);
+        this._state.fieldInt64();
+        break;
+      case 'FloatProperty':
+        this._state.yieldName(keyStr);
+        this._state.fieldFloat32();
+        break;
+      case 'DoubleProperty':
+        this._state.yieldName(keyStr);
+        this._state.fieldDouble64();
+        break;
+      case 'StrProperty':
+      case 'NameProperty':
+        this._state.yieldName(keyStr);
+        this._state.fieldString();
+        break;
+      case 'BoolProperty':
+      case 'ByteProperty':
+        // Primitive item rule: in MapProperty value position (like
+        // ArrayProperty items) there is no per-item BoolVal/EnumName
+        // metadata — the wire value is a single raw byte.
+        this._state.yieldName(keyStr);
+        this._state.fieldByte();
+        break;
+      case 'Int8Property':
+        this._state.yieldName(keyStr);
+        this._state.fieldInt8();
+        break;
+      default:
+        throw new Error(
+          `Unsupported MapProperty ValueType: ${top.valueType} (offset 0x${keyStart.toString(16)})`,
+        );
+    }
+
+    return this.tagHeaderStep('mapKey', keyStr, keyStart);
+  }
+
+  private readMapKey(keyType: string, offset: number): string {
+    switch (keyType) {
+      case 'NameProperty':
+      case 'StrProperty':
+        return this._reader.readString();
+      // ByteProperty keys in `SBS00.sav` are stored as the enum's FString
+      // representation (e.g. `ESBBufferDataSlot_Slot0`), not as a raw byte.
+      // The MapProperty tag metadata carries no `EnumName` for keys, so
+      // the FString form is the only safe disambiguation observed in the
+      // wild. If a raw-byte byte-keyed map ever appears it will desync
+      // here and need a separate keyType marker.
+      case 'ByteProperty':
+        return this._reader.readString();
+      case 'IntProperty':
+      case 'UInt32Property':
+        return String(this._reader.readInt32());
+      case 'Int64Property':
+        return String(this._reader.readInt64());
+      case 'Int8Property':
+        return String(this._reader.readInt8());
+      default:
+        throw new Error(
+          `Unsupported MapProperty KeyType: ${keyType} (offset 0x${offset.toString(16)})`,
+        );
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -619,22 +1130,6 @@ export class StreamDecoder {
       row.index = index;
     }
     return row;
-  }
-
-  private readInt32Batch(count: number): number[] {
-    const result = new Array<number>(count);
-    for (let i = 0; i < count; i++) {
-      result[i] = this._reader.readInt32();
-    }
-    return result;
-  }
-
-  private readUint16Batch(count: number): number[] {
-    const result = new Array<number>(count);
-    for (let i = 0; i < count; i++) {
-      result[i] = this._reader.readUint16();
-    }
-    return result;
   }
 
   private hexFromPosition(start: number): string {
