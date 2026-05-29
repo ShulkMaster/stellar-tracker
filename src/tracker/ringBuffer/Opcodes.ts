@@ -92,6 +92,33 @@ export const enum Opcode {
    * six sub-rows per entry — no extra row for the scheduler itself.
    */
   CustomVersionEntry = 32,
+
+  /**
+   * MapProperty value-prefix opcode. Reads the 4-byte unused/padding
+   * field then the `EntryCount` Int32, opens the map container, and
+   * either pushes a `mapIter` frame + one `MapEntry` opcode (entries > 0)
+   * or short-circuits to `close + tagName` (empty map). Emits a
+   * `tagHeader{field:'entryCount'}` row so the byte log surfaces the
+   * count inline with other tag-header rows.
+   */
+  MapCount = 33,
+
+  /**
+   * MapProperty per-entry scheduler. Reads one key per the active
+   * `mapIter` frame's `keyType`, emits a `tagHeader{field:'mapKey'}`
+   * row carrying the key bytes, then pushes the value-reading
+   * opcode(s) per `valueType`:
+   *
+   * - primitive ValueType: `yieldName(keyStr) + <primitive read>`
+   * - `StructProperty` value: `openStruct(keyStr) + _listDepth++ + tagName`
+   *
+   * The next entry (or the map's tear-down) is queued by the
+   * `advancePropertyIter` post-step hook in `StreamDecoder.next()`.
+   */
+  MapEntry = 34,
+
+  /** Reads a signed Int8 value from the file (1 byte). */
+  FieldInt8 = 35,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -128,4 +155,7 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.TagValueType]: 'TagValueType',
   [Opcode.ArrayCount]: 'ArrayCount',
   [Opcode.CustomVersionEntry]: 'CustomVersionEntry',
+  [Opcode.MapCount]: 'MapCount',
+  [Opcode.MapEntry]: 'MapEntry',
+  [Opcode.FieldInt8]: 'FieldInt8',
 };

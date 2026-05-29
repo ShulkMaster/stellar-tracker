@@ -38,6 +38,12 @@ type TagState = {
    * tag header. Reset by `makeEmptyTag()` between properties.
    */
   itemCount: number;
+  /**
+   * Entry count for `MapProperty` Values. Populated by the `MapCount` opcode
+   * handler after the 4-byte padding + Int32 EntryCount; not part of the
+   * wire-side tag header. Reset by `makeEmptyTag()` between properties.
+   */
+  entryCount: number;
 };
 
 const NONE_TAG_NAME = 'None';
@@ -81,6 +87,7 @@ export class StreamDecoder {
     [Opcode.FieldFloat32]: () => this.handleFieldFloat32(),
     [Opcode.FieldDouble64]: () => this.handleFieldDouble64(),
     [Opcode.FieldByte]: () => this.handleFieldByte(),
+    [Opcode.FieldInt8]: () => this.handleFieldInt8(),
     [Opcode.ValBool]: () => this.handleValBool(),
     [Opcode.YieldName]: () => this.handleYieldName(),
     [Opcode.OpenStruct]: () => this.handleOpenStruct(),
@@ -105,6 +112,8 @@ export class StreamDecoder {
     [Opcode.TagValueType]: () => this.handleTagValueType(),
     [Opcode.ArrayCount]: () => this.handleArrayCount(),
     [Opcode.CustomVersionEntry]: () => this.handleCustomVersionEntry(),
+    [Opcode.MapCount]: () => this.handleMapCount(),
+    [Opcode.MapEntry]: () => this.handleMapEntry(),
   });
 
   constructor(reader: BinaryReader) {
@@ -123,6 +132,27 @@ export class StreamDecoder {
 
   public get totalSize(): number {
     return this._reader.size;
+  }
+
+  /**
+   * Number of active iteration frames (`arrayIter` / `mapIter`). A non-zero
+   * value means a step-loop driver is currently *inside* one or more
+   * arrays/maps. The UI uses this to enable a "skip to end of current
+   * iteration" control so users don't have to advance through every
+   * element of a large container by hand.
+   */
+  public get framesDepth(): number {
+    return this._frames.length;
+  }
+
+  /**
+   * Discriminator of the innermost iteration frame, or `null` when no
+   * iteration is active. Lets the UI label its "skip" affordance with
+   * the right noun (`"array"` vs `"map"`).
+   */
+  public get currentIterKind(): 'arrayIter' | 'mapIter' | null {
+    const top = this._frames[this._frames.length - 1];
+    return top ? top.kind : null;
   }
 
   public reset(): void {
@@ -153,6 +183,7 @@ export class StreamDecoder {
       keyType: '',
       valueType: '',
       itemCount: 0,
+      entryCount: 0,
     };
   }
 
@@ -172,6 +203,7 @@ export class StreamDecoder {
     Opcode.FieldFloat32,
     Opcode.FieldDouble64,
     Opcode.FieldByte,
+    Opcode.FieldInt8,
     Opcode.FieldString,
   ]);
 
@@ -230,29 +262,63 @@ export class StreamDecoder {
         continue;
       }
       this.decorateWithCustomVersionIndex(row);
-      this.advanceArrayIter(opcode);
+      this.advancePropertyIter(opcode);
       return row;
     }
     throw new Error('next() called with no available opcodes or frames');
   }
 
   /**
-   * Post-step hook for `ArrayProperty` iteration. Runs after every opcode
-   * handler. The boundary is any opcode in `_arrayElementOpcodes` (a single
-   * read per element — body primitive arrays are the only iter-frame
-   * caller). On boundary, decrement `remaining` and either re-enqueue the
-   * next element template or tear down the array (`Close` plus the parent
-   * `TagName`).
+   * Post-step hook for `ArrayProperty` and `MapProperty` iteration. Runs
+   * after every opcode handler.
+   *
+   * - `arrayIter`: boundary is any opcode in `_arrayElementOpcodes` (one
+   *   read per element). On boundary, decrement `remaining` and either
+   *   re-enqueue the next element template or tear down the array
+   *   (`Close` + parent `TagName`).
+   * - `mapIter`: boundary depends on `valueType`:
+   *   - `StructProperty`: `PropNone` opcode AND `_listDepth ===
+   *     entryStartListDepth` (the inner None just popped the entry's
+   *     struct container, so the value is fully consumed).
+   *   - Primitive value: same primitive-read set as arrays.
+   *   On boundary, decrement `remaining` and chain another `MapEntry`
+   *   scheduler or tear down the map (`Close` + parent `TagName`).
    */
-  private advanceArrayIter(executed: Opcode): void {
+  private advancePropertyIter(executed: Opcode): void {
     const top = this._frames[this._frames.length - 1];
-    if (!top || !StreamDecoder._arrayElementOpcodes.has(executed)) {
+    if (!top) {
+      return;
+    }
+
+    if (top.kind === 'arrayIter') {
+      if (!StreamDecoder._arrayElementOpcodes.has(executed)) {
+        return;
+      }
+      top.remaining -= 1;
+      if (top.remaining > 0) {
+        this.enqueueArrayElement(top.element);
+      } else {
+        this._frames.pop();
+        this._state.close();
+        this._state.tagName();
+      }
+      return;
+    }
+
+    // top.kind === 'mapIter'
+    const isStructValueBoundary = top.valueType === 'StructProperty'
+      && executed === Opcode.PropNone
+      && this._listDepth === top.entryStartListDepth;
+    const isPrimitiveValueBoundary = top.valueType !== 'StructProperty'
+      && StreamDecoder._arrayElementOpcodes.has(executed);
+
+    if (!isStructValueBoundary && !isPrimitiveValueBoundary) {
       return;
     }
 
     top.remaining -= 1;
     if (top.remaining > 0) {
-      this.enqueueArrayElement(top.element);
+      this._state.mapEntry();
     } else {
       this._frames.pop();
       this._state.close();
@@ -432,6 +498,12 @@ export class StreamDecoder {
     return this.readStep(Opcode.FieldByte, '', value, start);
   }
 
+  private handleFieldInt8(): Extract<DecodeStepRow, { kind: 'read' }> {
+    const start = this._reader.position;
+    const value = this._reader.readInt8();
+    return this.readStep(Opcode.FieldInt8, '', value, start);
+  }
+
   /** ValBool emits the cached BoolProperty value without consuming wire bytes. */
   private handleValBool(): Extract<DecodeStepRow, { kind: 'read' }> {
     return {
@@ -489,7 +561,17 @@ export class StreamDecoder {
       this._listDepth--;
       // If a parent property list is still open, resume it by enqueuing
       // another TagName *after* the PropNone has popped the inner container.
-      if (this._listDepth > 0) {
+      // Exception: when the None terminates a MapProperty entry's
+      // StructProperty value, the next wire bytes are the next entry's KEY
+      // (not a property tag header). `advancePropertyIter` on the upcoming
+      // PropNone will chain the next `MapEntry` scheduler or tear down the
+      // map; pushing a parent TagName here would desync on the key bytes.
+      const top = this._frames[this._frames.length - 1];
+      const isMapStructEntryNone = top !== undefined
+        && top.kind === 'mapIter'
+        && top.valueType === 'StructProperty'
+        && this._listDepth === top.entryStartListDepth;
+      if (this._listDepth > 0 && !isMapStructEntryNone) {
         this._state.tagName();
       }
       return this.tagHeaderStep('name', name, start);
@@ -675,8 +757,12 @@ export class StreamDecoder {
         this._state.yieldName(propName);
         this._state.arrayCount();
         return;
+      case 'MapProperty':
+        this._state.yieldName(propName);
+        this._state.mapCount();
+        return;
       default:
-        // MapProperty, SetProperty, TextProperty, unknown:
+        // SetProperty, TextProperty, unknown:
         // emit the field with a placeholder and skip its `size` bytes.
         this._state.yieldName(propName);
         this._state.skipBytes(size);
@@ -851,6 +937,158 @@ export class StreamDecoder {
         return;
       default:
         throw new Error(`Unsupported ArrayProperty ItemType: ${element.itemType}`);
+    }
+  }
+
+  /**
+   * Reads the leading 4-byte padding + Int32 `EntryCount` of a
+   * `MapProperty` Value and opens the map container. Either pushes a
+   * `mapIter` frame and one `MapEntry` opcode (entries > 0) or
+   * short-circuits to `close + tagName` (empty map). Emits a
+   * `tagHeader{field:'entryCount'}` row so the byte log surfaces the
+   * count inline with other tag-header rows.
+   *
+   * The 4-byte padding is observed as `00 00 00 00` in every `SBS00.sav`
+   * map; a non-zero value is surfaced via `console.warn` but not treated
+   * as fatal.
+   */
+  private handleMapCount(): DecodeStepRow {
+    const start = this._reader.position;
+    const padding = this._reader.readInt32();
+    if (padding !== 0) {
+      console.warn(
+        `MapProperty padding expected 0, got ${padding} at offset 0x${start.toString(16)}`,
+      );
+    }
+    const n = this._reader.readInt32();
+    this._tag.entryCount = n;
+
+    const propName = this._tag.name;
+    const keyType = this._tag.keyType;
+    const valueType = this._tag.valueType;
+
+    this._state.openMap(propName);
+    if (n === 0) {
+      this._state.close();
+      this._state.tagName();
+    } else {
+      this._frames.push({
+        kind: 'mapIter',
+        remaining: n,
+        totalCount: n,
+        keyType,
+        valueType,
+        propName,
+        entryStartListDepth: this._listDepth,
+      });
+      this._state.mapEntry();
+    }
+
+    return this.tagHeaderStep('entryCount', n, start);
+  }
+
+  /**
+   * Scheduler opcode for one `MapProperty` entry. Reads the key from the
+   * wire per the active `mapIter` frame's `keyType`, emits a
+   * `tagHeader{field:'mapKey'}` row carrying the key bytes (so the byte
+   * log accounts for the key's wire consumption), then pushes the
+   * value-reading opcodes:
+   *
+   * - primitive ValueType: `yieldName(keyStr) + <primitive read>`
+   * - `StructProperty` value: `openStruct(keyStr) + _listDepth++ + tagName`
+   *
+   * The next entry (or map tear-down) is queued by `advancePropertyIter`
+   * after the value boundary opcode fires.
+   */
+  private handleMapEntry(): DecodeStepRow {
+    const top = this._frames[this._frames.length - 1];
+    if (!top || top.kind !== 'mapIter') {
+      throw new Error('MapEntry without mapIter frame');
+    }
+
+    const keyStart = this._reader.position;
+    const keyStr = this.readMapKey(top.keyType, keyStart);
+
+    switch (top.valueType) {
+      case 'StructProperty':
+        // Struct value: open the entry sub-object keyed by the
+        // stringified map key, then enter its nested property list.
+        // The inner `None` will decrement `_listDepth` back to
+        // `entryStartListDepth`; `handleTagName`'s None gate uses that
+        // to suppress the parent-TagName re-enqueue, and
+        // `advancePropertyIter` uses the same condition to detect the
+        // entry's `PropNone` as the boundary.
+        this._state.openStruct(keyStr);
+        this._listDepth++;
+        this._state.tagName();
+        break;
+      case 'IntProperty':
+      case 'UInt32Property':
+        this._state.yieldName(keyStr);
+        this._state.fixInt32(1);
+        break;
+      case 'Int64Property':
+        this._state.yieldName(keyStr);
+        this._state.fieldInt64();
+        break;
+      case 'FloatProperty':
+        this._state.yieldName(keyStr);
+        this._state.fieldFloat32();
+        break;
+      case 'DoubleProperty':
+        this._state.yieldName(keyStr);
+        this._state.fieldDouble64();
+        break;
+      case 'StrProperty':
+      case 'NameProperty':
+        this._state.yieldName(keyStr);
+        this._state.fieldString();
+        break;
+      case 'BoolProperty':
+      case 'ByteProperty':
+        // Primitive item rule: in MapProperty value position (like
+        // ArrayProperty items) there is no per-item BoolVal/EnumName
+        // metadata — the wire value is a single raw byte.
+        this._state.yieldName(keyStr);
+        this._state.fieldByte();
+        break;
+      case 'Int8Property':
+        this._state.yieldName(keyStr);
+        this._state.fieldInt8();
+        break;
+      default:
+        throw new Error(
+          `Unsupported MapProperty ValueType: ${top.valueType} (offset 0x${keyStart.toString(16)})`,
+        );
+    }
+
+    return this.tagHeaderStep('mapKey', keyStr, keyStart);
+  }
+
+  private readMapKey(keyType: string, offset: number): string {
+    switch (keyType) {
+      case 'NameProperty':
+      case 'StrProperty':
+        return this._reader.readString();
+      // ByteProperty keys in `SBS00.sav` are stored as the enum's FString
+      // representation (e.g. `ESBBufferDataSlot_Slot0`), not as a raw byte.
+      // The MapProperty tag metadata carries no `EnumName` for keys, so
+      // the FString form is the only safe disambiguation observed in the
+      // wild. If a raw-byte byte-keyed map ever appears it will desync
+      // here and need a separate keyType marker.
+      case 'ByteProperty':
+        return this._reader.readString();
+      case 'IntProperty':
+      case 'UInt32Property':
+        return String(this._reader.readInt32());
+      case 'Int64Property':
+        return String(this._reader.readInt64());
+      case 'Int8Property':
+        return String(this._reader.readInt8());
+      default:
+        throw new Error(
+          `Unsupported MapProperty KeyType: ${keyType} (offset 0x${offset.toString(16)})`,
+        );
     }
   }
 
