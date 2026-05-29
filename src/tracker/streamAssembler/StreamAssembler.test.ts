@@ -6,8 +6,12 @@ import {
   loadHeaderThroughSaveClass,
   FIRST_BODY_PROPERTY,
   EXPECTED_NEW_GAME_CREATE_TIME,
+  GENERIC_STRUCT_FIXTURE,
+  MAP_NAME_FLOAT_FIXTURE,
+  PRIMITIVE_ARRAY_FIXTURE,
 } from 'tracker/streamDecoder/fixtures';
 import type { DecodeStepRow } from 'types/table';
+import { ENTITY } from 'types/entity';
 
 describe('StreamAssembler', () => {
   it('assembles the parsed GVAS header from decoder steps', () => {
@@ -16,7 +20,9 @@ describe('StreamAssembler', () => {
 
     const header = assembler.parseHeader();
 
-    expect(header).toEqual(EXPECTED_HEADER);
+    // toMatchObject: header (and every nested struct in customVersions)
+    // carries an extra Symbol(ENTITY) property after Phase 3.
+    expect(header).toMatchObject(EXPECTED_HEADER);
     expect(decoder.position).toBe(HEADER_THROUGH_SAVE_CLASS_BYTES);
     expect(decoder.canStep).toBe(false);
   });
@@ -56,7 +62,7 @@ describe('StreamAssembler', () => {
       (assembler as unknown as { applyStep(step: DecodeStepRow): void }).applyStep(step);
     }
 
-    expect(assembler.header.items).toEqual([{ guid: 'AABB', version: 2 }]);
+    expect(assembler.header.items).toMatchObject([{ guid: 'AABB', version: 2 }]);
   });
 
   it('pops the stack on Close and PropNone', () => {
@@ -76,7 +82,59 @@ describe('StreamAssembler', () => {
       (assembler as unknown as { applyStep(step: DecodeStepRow): void }).applyStep(step);
     }
 
-    expect(assembler.header.inner).toEqual({ value: 1 });
+    expect(assembler.header.inner).toMatchObject({ value: 1 });
     expect(assembler.header.items).toEqual([]);
+  });
+
+  it('stamps the ENTITY symbol on header, body struct, and map containers; arrays stay plain', () => {
+    const headerBytes = loadHeaderThroughSaveClass();
+    // Concatenate: real GVAS header + a body Struct + a body Map + a body Array.
+    // Each individual fixture ends in its own synthetic body-None terminator
+    // (9 bytes = `Int32 5` + `"None\0"`); strip the inner terminators so the
+    // body's top-level property list runs through all three properties and
+    // closes on the trailing fixture's final None.
+    const NONE_TERMINATOR_BYTES = 9;
+    const trimmedGeneric = GENERIC_STRUCT_FIXTURE.subarray(
+      0, GENERIC_STRUCT_FIXTURE.length - NONE_TERMINATOR_BYTES,
+    );
+    const trimmedMap = MAP_NAME_FLOAT_FIXTURE.subarray(
+      0, MAP_NAME_FLOAT_FIXTURE.length - NONE_TERMINATOR_BYTES,
+    );
+    const stitched = new Uint8Array(
+      headerBytes.length + trimmedGeneric.length + trimmedMap.length + PRIMITIVE_ARRAY_FIXTURE.length,
+    );
+    let off = 0;
+    stitched.set(headerBytes, off); off += headerBytes.length;
+    stitched.set(trimmedGeneric, off); off += trimmedGeneric.length;
+    stitched.set(trimmedMap, off); off += trimmedMap.length;
+    stitched.set(PRIMITIVE_ARRAY_FIXTURE, off);
+
+    const decoder = new StreamDecoder(new BinaryReader(stitched));
+    const assembler = new StreamAssembler(decoder);
+    const assembled = assembler.parseHeader() as Record<string, unknown> & {
+      [ENTITY]?: string;
+      body?: Record<string, unknown> & { [ENTITY]?: string };
+    };
+
+    // Root header is a struct.
+    expect(assembled[ENTITY]).toBe('struct');
+    expect(JSON.parse(JSON.stringify(assembled))).not.toHaveProperty('Symbol(stelar.entity)');
+
+    const body = assembled.body!;
+    expect(body[ENTITY]).toBe('struct');
+
+    const innerStruct = body.Inner as Record<string, unknown> & { [ENTITY]?: string };
+    expect(innerStruct[ENTITY]).toBe('struct');
+
+    const mapContainer = body.DataMap_float as Record<string, unknown> & { [ENTITY]?: string };
+    expect(mapContainer[ENTITY]).toBe('map');
+    expect(Object.keys(mapContainer).sort()).toEqual(['PlayerCameraPitch', 'PlayerCameraYaw']);
+    expect(JSON.stringify(mapContainer).includes('stelar.entity')).toBe(false);
+
+    const arr = body.Lockid;
+    expect(Array.isArray(arr)).toBe(true);
+    // Arrays carry no ENTITY marker — `Array.isArray` already distinguishes
+    // them from struct/map containers.
+    expect((arr as unknown as { [ENTITY]?: string })[ENTITY]).toBeUndefined();
   });
 });

@@ -2,19 +2,53 @@
   import { onMount } from 'svelte';
   import DataTable from './components/DataTable.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
-  import { BinaryReader, StreamDecoder } from 'tracker';
+  import JsonViewer from './components/JsonViewer.svelte';
+  import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
   import type { DecodeStepRow } from './types/table';
 
   let decoder = $state<StreamDecoder | null>(null);
+  let assembler = $state<StreamAssembler | null>(null);
   let tableRows = $state<DecodeStepRow[]>([]);
+  let jsonOutput = $state<string>('{}');
   let fileLoaded = $state(false);
   let isLoading = $state(false);
   let position = $state(0);
   let totalSize = $state(0);
   let canAdvance = $state(false);
   let isFinished = $state(false);
+  let iterDepth = $state(0);
+  let iterKind = $state<'arrayIter' | 'mapIter' | null>(null);
+
+  // Safety cap so a malformed stream can never freeze the tab while skipping
+  // through a runaway iteration. Largest in-the-wild container in `SBS00.sav`
+  // is well under this, so the cap should never fire on legitimate input.
+  const SKIP_STEP_LIMIT = 200_000;
 
   let stepCount = $derived(tableRows.length);
+
+  function safeStringify(obj: unknown): string {
+    return JSON.stringify(
+      obj,
+      (_key, value) => {
+        if (typeof value === 'bigint') return value.toString();
+        if (value instanceof Uint8Array) {
+          return Array.from(value)
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join(' ');
+        }
+        return value;
+      },
+      2,
+    );
+  }
+
+  function refreshJson() {
+    if (!assembler) {
+      jsonOutput = '{}';
+      return;
+    }
+    jsonOutput = safeStringify(assembler.header);
+  }
 
   function syncDecoderState() {
     if (decoder === null) {
@@ -22,12 +56,16 @@
       totalSize = 0;
       canAdvance = false;
       isFinished = false;
+      iterDepth = 0;
+      iterKind = null;
       return;
     }
     position = decoder.position;
     totalSize = decoder.totalSize;
     canAdvance = decoder.canStep;
     isFinished = fileLoaded && !decoder.canStep;
+    iterDepth = decoder.framesDepth;
+    iterKind = decoder.currentIterKind;
   }
 
   async function loadFile() {
@@ -37,9 +75,12 @@
       if (!response.ok) throw new Error(`Failed to load file: ${response.statusText}`);
       const buffer = await response.bytes();
       const reader = new BinaryReader(new Uint8Array(buffer));
-      decoder = new StreamDecoder(reader);
+      const nextDecoder = new StreamDecoder(reader);
+      decoder = nextDecoder;
+      assembler = new StreamAssembler(nextDecoder);
       tableRows = [];
       fileLoaded = true;
+      refreshJson();
       syncDecoderState();
     } catch (e: unknown) {
       console.error(e);
@@ -50,26 +91,60 @@
   }
 
   function step() {
-    if (!decoder?.canStep) return;
-    tableRows = [...tableRows, decoder.next()];
+    if (!assembler || !decoder?.canStep) return;
+    const row = assembler.step();
+    if (row === null) return;
+    tableRows = [...tableRows, row];
+    refreshJson();
     syncDecoderState();
   }
 
   function stepToClose() {
-    if (!decoder?.canStep) return;
+    if (!assembler || !decoder?.canStep) return;
     const collected: DecodeStepRow[] = [];
     while (decoder.canStep) {
-      const row = decoder.next();
+      const row = assembler.step();
+      if (row === null) break;
       collected.push(row);
       if (row.kind === 'close' || row.kind === 'propNone') break;
     }
     tableRows = [...tableRows, ...collected];
+    refreshJson();
+    syncDecoderState();
+  }
+
+  /**
+   * Fast-forward through every remaining element of the *innermost* active
+   * array/map iteration (and emit its tear-down `close`). No-op when the
+   * decoder isn't currently inside an `arrayIter` / `mapIter` frame.
+   * Bounded by `SKIP_STEP_LIMIT` so a runaway stream can't freeze the tab.
+   */
+  function stepToIterEnd() {
+    if (!assembler || !decoder?.canStep) return;
+    const targetDepth = decoder.framesDepth;
+    if (targetDepth === 0) return;
+    const collected: DecodeStepRow[] = [];
+    let i = 0;
+    while (decoder.canStep && decoder.framesDepth >= targetDepth && i < SKIP_STEP_LIMIT) {
+      const row = assembler.step();
+      if (row === null) break;
+      collected.push(row);
+      i++;
+    }
+    if (i === SKIP_STEP_LIMIT) {
+      console.warn(`stepToIterEnd: hit safety cap of ${SKIP_STEP_LIMIT} steps`);
+    }
+    tableRows = [...tableRows, ...collected];
+    refreshJson();
     syncDecoderState();
   }
 
   function reset() {
-    decoder?.reset();
+    if (!decoder) return;
+    decoder.reset();
+    assembler = new StreamAssembler(decoder);
     tableRows = [];
+    refreshJson();
     syncDecoderState();
   }
 
@@ -110,20 +185,33 @@
       onLoad={loadFile}
       onStep={step}
       onStepToClose={stepToClose}
+      onStepToIterEnd={stepToIterEnd}
       onReset={reset}
       canStep={fileLoaded}
       {isLoading}
       isEOF={isFinished}
       {position}
       {totalSize}
+      {iterDepth}
+      {iterKind}
     />
 
-    <section class="steps-section">
-      <div class="section-header">
-        <h2 class="section-title">Decode Steps</h2>
-        <span class="entry-count">{stepCount}</span>
+    <section class="workbench">
+      <div class="pane pane--steps">
+        <div class="section-header">
+          <h2 class="section-title">Decode Steps</h2>
+          <span class="entry-count">{stepCount}</span>
+        </div>
+        <DataTable rows={tableRows} />
       </div>
-      <DataTable rows={tableRows} />
+
+      <div class="pane pane--json">
+        <div class="section-header">
+          <h2 class="section-title">Assembled JSON</h2>
+          <span class="entry-count">live</span>
+        </div>
+        <JsonViewer value={jsonOutput} />
+      </div>
     </section>
   </main>
 </div>
@@ -148,7 +236,7 @@
   }
 
   .app-header-inner {
-    max-width: 1100px;
+    max-width: 1600px;
     margin: 0 auto;
     padding: 1.25rem 1.5rem;
     display: flex;
@@ -221,7 +309,7 @@
   }
 
   .app-main {
-    max-width: 1100px;
+    max-width: 1600px;
     margin: 0 auto;
     padding: 1.75rem 1.5rem 3rem;
     display: flex;
@@ -232,12 +320,26 @@
     width: 100%;
   }
 
-  .steps-section {
+  .workbench {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    flex: 1;
+    min-height: 0;
+  }
+
+  @media (max-width: 1100px) {
+    .workbench {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .pane {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    flex: 1;
-    min-height: 0;
+    min-height: 600px;
+    min-width: 0;
   }
 
   .section-header {
