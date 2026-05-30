@@ -7,6 +7,9 @@
   import type { DecodeStepRow } from './types/table';
   import { safeStringify } from './lib/safeStringify';
 
+  // Lazy import for prototype view (keeps bundle clean until activated)
+  import Tracker from './features/tracker/Tracker.svelte';
+
   let decoder = $state<StreamDecoder | null>(null);
   let assembler = $state<StreamAssembler | null>(null);
   let tableRows = $state<DecodeStepRow[]>([]);
@@ -19,6 +22,14 @@
   let isFinished = $state(false);
   let iterDepth = $state(0);
   let iterKind = $state<'arrayIter' | 'mapIter' | null>(null);
+
+  // Main top-level navigation (broader categories in the top bar next to logo)
+  type MainTab = 'overview' | 'collectibles' | 'progression' | 'appearance' | 'combat' | 'decoder';
+  let activeMainTab = $state<MainTab>('overview');
+
+  function setMainTab(tab: MainTab) {
+    activeMainTab = tab;
+  }
 
   // Safety cap so a malformed stream can never freeze the tab while skipping
   // through a runaway iteration. Largest in-the-wild container in `SBS00.sav`
@@ -145,10 +156,20 @@
         <img class="app-logo" src="/logo.svg" alt="Stellar Blade Tracker" width="40" height="40" aria-hidden="true" />
         <div>
           <h1 class="app-title">Stellar Tracker</h1>
-          <p class="app-subtitle">Save file stream decoder</p>
         </div>
       </div>
-      {#if fileLoaded}
+
+      <!-- Main top navigation tabs next to logo (as requested) -->
+      <nav class="main-top-nav">
+        <button class="top-nav-item" class:active={activeMainTab === 'overview'} onclick={() => setMainTab('overview')}>Overview</button>
+        <button class="top-nav-item" class:active={activeMainTab === 'collectibles'} onclick={() => setMainTab('collectibles')}>Collectibles</button>
+        <button class="top-nav-item" class:active={activeMainTab === 'progression'} onclick={() => setMainTab('progression')}>Progression</button>
+        <button class="top-nav-item" class:active={activeMainTab === 'appearance'} onclick={() => setMainTab('appearance')}>Appearance</button>
+        <button class="top-nav-item" class:active={activeMainTab === 'combat'} onclick={() => setMainTab('combat')}>Combat</button>
+        <button class="top-nav-item decoder" class:active={activeMainTab === 'decoder'} onclick={() => setMainTab('decoder')}>Decoder</button>
+      </nav>
+
+      {#if activeMainTab === 'decoder' && fileLoaded}
         <div class="app-status">
           <span class="status-pill" class:status-pill--done={isFinished} class:status-pill--active={canAdvance}>
             {#if isFinished}
@@ -166,38 +187,44 @@
   </header>
 
   <main class="app-main">
-    <ControlPanel
-      onLoad={loadFile}
-      onStep={step}
-      onStepToClose={stepToClose}
-      onStepToIterEnd={stepToIterEnd}
-      onReset={reset}
-      canStep={fileLoaded}
-      {isLoading}
-      isEOF={isFinished}
-      {position}
-      {totalSize}
-      {iterDepth}
-      {iterKind}
-    />
+    {#if activeMainTab === 'decoder'}
+      <!-- Decoder controls (dev-only stepping UI) -->
+      <ControlPanel
+        onLoad={loadFile}
+        onStep={step}
+        onStepToClose={stepToClose}
+        onStepToIterEnd={stepToIterEnd}
+        onReset={reset}
+        canStep={fileLoaded}
+        {isLoading}
+        isEOF={isFinished}
+        {position}
+        {totalSize}
+        {iterDepth}
+        {iterKind}
+      />
 
-    <section class="workbench">
-      <div class="pane pane--steps">
-        <div class="section-header">
-          <h2 class="section-title">Decode Steps</h2>
-          <span class="entry-count">{stepCount}</span>
+      <section class="workbench">
+        <div class="pane pane--steps">
+          <div class="section-header">
+            <h2 class="section-title">Decode Steps</h2>
+            <span class="entry-count">{stepCount}</span>
+          </div>
+          <DataTable rows={tableRows} />
         </div>
-        <DataTable rows={tableRows} />
-      </div>
 
-      <div class="pane pane--json">
-        <div class="section-header">
-          <h2 class="section-title">Assembled JSON</h2>
-          <span class="entry-count">live</span>
+        <div class="pane pane--json">
+          <div class="section-header">
+            <h2 class="section-title">Assembled JSON</h2>
+            <span class="entry-count">live</span>
+          </div>
+          <JsonViewer value={jsonOutput} />
         </div>
-        <JsonViewer value={jsonOutput} />
-      </div>
-    </section>
+      </section>
+    {:else}
+      <!-- Tracker experience with top-level category from header -->
+      <Tracker activeTab={activeMainTab} />
+    {/if}
   </main>
 </div>
 
@@ -351,5 +378,36 @@
     border: 1px solid var(--st-border-subtle);
     padding: 0.2rem 0.55rem;
     border-radius: var(--st-radius-sm);
+  }
+
+  /* View mode switcher (header) */
+  .view-mode-switch {
+    display: flex;
+    gap: 0.25rem;
+    background: var(--st-bg-surface);
+    padding: 2px;
+    border-radius: var(--st-radius-sm);
+    border: 1px solid var(--st-border-subtle);
+  }
+
+  .mode-btn {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--st-text-muted);
+    border: none;
+    cursor: pointer;
+    transition: all 0.1s ease;
+  }
+
+  .mode-btn.active {
+    background: var(--st-accent-dim);
+    color: var(--st-accent);
+  }
+
+  .mode-btn:hover:not(.active) {
+    color: var(--st-text);
   }
 </style>
