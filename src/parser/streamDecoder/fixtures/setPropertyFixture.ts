@@ -1,4 +1,4 @@
-import { BinaryWriter } from 'tracker/binaryWriter/BinaryWriter';
+import { BinaryWriter } from 'parser/binaryWriter/BinaryWriter';
 
 /**
  * `ItemOtaineSet : SetProperty<NameProperty>` with two FString items.

@@ -1,7 +1,7 @@
 import type { SaveHeader } from 'types/safeFile';
 import type { DecodeStepRow, DecodeValue } from 'types/table';
 import { ENTITY } from 'types/entity';
-import { StreamDecoder } from 'tracker/streamDecoder/StreamDecoder';
+import { StreamDecoder } from 'parser/streamDecoder/StreamDecoder';
 
 type ObjectContainer = Record<string | symbol, unknown>;
 type Container = ObjectContainer | unknown[];

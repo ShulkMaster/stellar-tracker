@@ -1,4 +1,4 @@
-import { BinaryWriter } from 'tracker/binaryWriter/BinaryWriter';
+import { BinaryWriter } from 'parser/binaryWriter/BinaryWriter';
 
 /**
  * Synthetic body fixtures for `ArrayProperty` decoding (Phase 2+).

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
+import { BinaryReader, StreamDecoder, StreamAssembler } from 'parser';
 import { ENTITY } from 'types/entity';
 import {
   HEADER_PREFIX,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BinaryReader, StreamAssembler, StreamDecoder } from 'tracker';
+import { BinaryReader, StreamAssembler, StreamDecoder } from 'parser';
 import {
   EXPECTED_HEADER,
   HEADER_THROUGH_SAVE_CLASS_BYTES,
@@ -10,7 +10,7 @@ import {
   MAP_NAME_FLOAT_FIXTURE,
   PRIMITIVE_ARRAY_FIXTURE,
   VECTOR_STRUCT_FIXTURE,
-} from 'tracker/streamDecoder/fixtures';
+} from 'parser/streamDecoder/fixtures';
 import type { DecodeStepRow } from 'types/table';
 import { ENTITY } from 'types/entity';
 

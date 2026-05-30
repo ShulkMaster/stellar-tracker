@@ -1,4 +1,4 @@
-import { BinaryWriter } from 'tracker/binaryWriter/BinaryWriter';
+import { BinaryWriter } from 'parser/binaryWriter/BinaryWriter';
 
 /**
  * Expected Int64 value of `NewGameCreateTime` (matches SBS00.sav bytes
