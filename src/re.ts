@@ -18,15 +18,17 @@
  *   --from N         start index of a log slice to print
  *   --count N        slice length (used with --from)
  *   --json           dump full step log as JSON to stdout
- *   --quiet          suppress success preview
+ *   --export           write assembled save to save.json on 100% EOF success
+ *   --quiet            suppress success preview
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
 import type { DataRow, DecodeStepRow } from 'types/table';
-import { BinaryReader, StreamDecoder } from 'tracker';
+import { safeStringify } from 'lib/safeStringify';
+import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
 
 type Args = {
   file: string;
@@ -37,6 +39,7 @@ type Args = {
   from: number;
   count: number;
   json: boolean;
+  export: boolean;
   quiet: boolean;
 };
 
@@ -65,6 +68,7 @@ function parseArgs(argv: readonly string[]): Args {
     from: num('--from', -1),
     count: num('--count', 20),
     json: argv.includes('--json'),
+    export: argv.includes('--export'),
     quiet: argv.includes('--quiet'),
   };
 }
@@ -103,6 +107,12 @@ function hexWindow(buf: Uint8Array, center: number, span: number): string {
   return lines.join('\n');
 }
 
+function jsonValue(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    typeof v === 'bigint' ? v.toString() : v,
+  );
+}
+
 function formatStep(s: LoggedStep): string {
   const row = s.row;
   const pos =
@@ -130,7 +140,7 @@ function formatStep(s: LoggedStep): string {
     return `${head} PropNone`;
   }
   if (row.kind === 'tagHeader') {
-    const val = JSON.stringify(row.value);
+    const val = jsonValue(row.value);
     const valTrunc = val.length > 48 ? `${val.slice(0, 45)}...` : val;
     return (
       `${head} ` +
@@ -144,7 +154,7 @@ function formatStep(s: LoggedStep): string {
     return `${head} Control      ${row.label}${detail}`;
   }
 
-  const val = JSON.stringify(row.value);
+  const val = jsonValue(row.value);
   const valTrunc = val.length > 48 ? `${val.slice(0, 45)}...` : val;
   return (
     `${head} ` +
@@ -155,7 +165,7 @@ function formatStep(s: LoggedStep): string {
 }
 
 function formatRead(r: DataRow): string {
-  const val = JSON.stringify(r.value);
+  const val = jsonValue(r.value);
   const valTrunc = val.length > 48 ? `${val.slice(0, 45)}...` : val;
   return `  ${r.type.padEnd(14)} @${r.byteRange.padEnd(16)} bytes=[${r.byteData}]`.padEnd(80) + ` value=${valTrunc}`;
 }
@@ -168,6 +178,7 @@ function main(): number {
 
   const reader = new BinaryReader(buffer, true);
   const decoder = new StreamDecoder(reader);
+  const assembler = new StreamAssembler(decoder);
 
   const steps: LoggedStep[] = [];
   let crashed: unknown = undefined;
@@ -182,7 +193,10 @@ function main(): number {
         break;
       }
       const positionBefore = decoder.position;
-      const row = decoder.next();
+      const row = assembler.step();
+      if (row === null) {
+        break;
+      }
       steps.push({
         index: steps.length,
         positionBefore,
@@ -191,8 +205,13 @@ function main(): number {
       });
     }
   } catch (err) {
-    crashed = err;
-    crashPosition = decoder.position;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('underflow') && decoder.position >= buffer.length - 16) {
+      // Drained body; optional trailing bytes may leave queued opcodes without wire data.
+    } else {
+      crashed = err;
+      crashPosition = decoder.position;
+    }
   }
 
   const readLog = reader.log;
@@ -254,6 +273,17 @@ function main(): number {
   if (args.json) {
     process.stdout.write(JSON.stringify({ steps, reads: readLog }, null, 2));
     process.stdout.write('\n');
+  }
+
+  if (
+    args.export
+    && args.limit === 0
+    && decoder.position === decoder.totalSize
+  ) {
+    const outPath = resolve('save.json');
+    const json = safeStringify(assembler.header);
+    writeFileSync(outPath, json, 'utf8');
+    console.log(`re: wrote save.json (${fmtBytes(Buffer.byteLength(json, 'utf8'))})`);
   }
 
   return 0;

@@ -116,4 +116,6 @@ export type SaveBody = {
 export type StelarSaveFile = {
   header: SaveHeader;
   body: SaveBody;
+  /** Space-separated uppercase hex of opaque bytes after the top-level body None. */
+  trailingFooter?: string;
 }

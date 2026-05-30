@@ -23,7 +23,9 @@ export type TagHeaderField =
   | 'valueType'
   | 'itemCount'
   | 'entryCount'
-  | 'mapKey';
+  | 'mapKey'
+  | 'innerName'
+  | 'innerType';
 
 export type DecodeStepRow =
   | {
