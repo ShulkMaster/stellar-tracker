@@ -28,16 +28,26 @@ import {
   NAME_ARRAY_FIXTURE,
   EMPTY_ARRAY_FIXTURE,
   STRUCT_ARRAY_FIXTURE,
-  STRUCT_ARRAY_PAYLOAD_BYTES,
+  EXPECTED_STRUCT_ARRAY,
   EXPECTED_LOCKID_VALUES,
   EXPECTED_ITEM_QUICK_SLOT_VALUES,
   MAP_NAME_FLOAT_FIXTURE,
   MAP_NAME_STRUCT_FIXTURE,
   MAP_INT_INT_EMPTY_FIXTURE,
   MAP_INT_STRUCT_FIXTURE,
+  VECTOR_BUFFER_DATA_MAP_FIXTURE,
   EXPECTED_MAP_NAME_FLOAT,
   EXPECTED_MAP_NAME_STRUCT,
   EXPECTED_MAP_INT_STRUCT,
+  EXPECTED_VECTOR_BUFFER_DATA,
+  SET_NAME_FIXTURE,
+  EXPECTED_ITEM_OTAINE_SET,
+  EFFECT_LIST_FIXTURE,
+  EXPECTED_EFFECT_LIST_COUNT,
+  PROGRESS_QUEST_ONE_ELEMENT_FIXTURE,
+  PROGRESS_QUEST_TWO_ELEMENT_FIXTURE,
+  PROGRESS_QUEST_FOUR_ELEMENT_FIXTURE,
+  EXPECTED_QUEST_ALIASES,
 } from './fixtures';
 import type { DecodeStepRow } from 'types/table';
 
@@ -402,37 +412,54 @@ describe('StreamDecoder', () => {
     expect(body.EmptyArr).toEqual([]);
   });
 
-  it('handles a StructProperty[N] ArrayProperty as an out-of-scope fallback that keeps the reader in sync', () => {
-    const header = loadHeaderThroughSaveClass();
-    const buffer = new Uint8Array(header.length + STRUCT_ARRAY_FIXTURE.length);
-    buffer.set(header, 0);
-    buffer.set(STRUCT_ARRAY_FIXTURE, header.length);
+  it('decodes a StructProperty[N] ArrayProperty with per-element InnerTags', () => {
+    const { body, decoder, totalBytes } = decodeBody(STRUCT_ARRAY_FIXTURE);
 
-    const decoder = new StreamDecoder(new BinaryReader(buffer));
-    const assembler = new StreamAssembler(decoder);
-
-    let saw_skipBytes = false;
-    let skipBytesCount = 0;
-
-    while (decoder.canStep) {
-      const step = assembler.step()!;
-      if (step.kind === 'read' && step.opcode === 'SkipBytes') {
-        saw_skipBytes = true;
-        skipBytesCount += 1;
-      }
-    }
-
-    expect(saw_skipBytes).toBe(true);
-    expect(skipBytesCount).toBe(1);
-    expect(decoder.position).toBe(buffer.length);
-
-    const body = (assembler.header as unknown as Record<string, unknown>).body as Record<string, unknown>;
-    const arr = body.StructArr;
+    const arr = body.StructArr as Record<string, unknown>[];
     expect(Array.isArray(arr)).toBe(true);
-    // Placeholder element from the SkipBytes read step lands inside the array.
-    expect((arr as unknown[]).length).toBe(1);
-    expect(typeof (arr as unknown[])[0]).toBe('string');
-    expect((arr as unknown[])[0]).toBe(`<skipped:${STRUCT_ARRAY_PAYLOAD_BYTES}>`);
+    expect(arr).toHaveLength(EXPECTED_STRUCT_ARRAY.length);
+    for (let i = 0; i < EXPECTED_STRUCT_ARRAY.length; i++) {
+      expect(arr[i]).toMatchObject(EXPECTED_STRUCT_ARRAY[i]!);
+    }
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
+  it('decodes SBS00 EffectList empty StructProperty array slice to EOF', () => {
+    const { body, decoder, totalBytes } = decodeBody(EFFECT_LIST_FIXTURE);
+    const arr = body.EffectList as unknown[];
+    expect(Array.isArray(arr)).toBe(true);
+    expect(arr).toHaveLength(EXPECTED_EFFECT_LIST_COUNT);
+    expect(decoder.position).toBe(totalBytes);
+    expect(decoder.canStep).toBe(false);
+  });
+
+  it('decodes SBS00 ProgressQuestList first struct element slice to EOF', () => {
+    const { body, decoder, totalBytes } = decodeBody(PROGRESS_QUEST_ONE_ELEMENT_FIXTURE);
+    const arr = body.ProgressQuestList as Record<string, unknown>[];
+    expect(arr).toHaveLength(1);
+    expect(arr[0]).toBeDefined();
+    expect(decoder.position).toBe(totalBytes);
+    expect(decoder.canStep).toBe(false);
+  });
+
+  it('decodes first two ProgressQuestList shared-header struct elements', () => {
+    const { body, decoder, totalBytes } = decodeBody(PROGRESS_QUEST_TWO_ELEMENT_FIXTURE);
+    const arr = body.ProgressQuestList as Record<string, unknown>[];
+    expect(arr).toHaveLength(2);
+    expect(arr[0]?.QuestAlias).toBe(EXPECTED_QUEST_ALIASES[0]);
+    expect(arr[1]?.QuestAlias).toBe(EXPECTED_QUEST_ALIASES[1]);
+    expect(decoder.position).toBe(totalBytes);
+    expect(decoder.canStep).toBe(false);
+  });
+
+  it('decodes ProgressQuestList through the 0x64bc element boundary', () => {
+    const { body, decoder, totalBytes } = decodeBody(PROGRESS_QUEST_FOUR_ELEMENT_FIXTURE);
+    const arr = body.ProgressQuestList as Record<string, unknown>[];
+    expect(arr).toHaveLength(4);
+    expect(arr.map((entry) => entry.QuestAlias)).toEqual([...EXPECTED_QUEST_ALIASES]);
+    expect(decoder.position).toBe(totalBytes);
+    expect(decoder.canStep).toBe(false);
   });
 
   // ──────────────────────── Phase 3 — MapProperty ─────────────────────────────
@@ -532,6 +559,25 @@ describe('StreamDecoder', () => {
     expect(decoder.position).toBe(totalBytes);
   });
 
+  it('decodes VectorBufferData Map<Byte, Struct> entries as fixed Vector values', () => {
+    const { body, decoder, totalBytes } = decodeBody(VECTOR_BUFFER_DATA_MAP_FIXTURE);
+
+    const map = body.VectorBufferData as Record<string, unknown>;
+    expect(map).toBeDefined();
+    expect((map as unknown as { [ENTITY]?: string })[ENTITY]).toBe('map');
+    for (const [k, expected] of Object.entries(EXPECTED_VECTOR_BUFFER_DATA)) {
+      const entry = map[k] as Record<string, unknown>;
+      expect(entry).toBeDefined();
+      expect((entry as unknown as { [ENTITY]?: string })[ENTITY]).toBe('struct');
+      expect(entry.x).toBeCloseTo(expected.x, 5);
+      expect(entry.y).toBeCloseTo(expected.y, 5);
+      expect(entry.z).toBeCloseTo(expected.z, 5);
+    }
+
+    expect(decoder.canStep).toBe(false);
+    expect(decoder.position).toBe(totalBytes);
+  });
+
   it('emits tagHeader(mapKey) -> openStruct -> inner reads -> propNone per entry for Map<Name, Struct>', () => {
     const header = loadHeaderThroughSaveClass();
     const buffer = new Uint8Array(header.length + MAP_NAME_STRUCT_FIXTURE.length);
@@ -580,5 +626,11 @@ describe('StreamDecoder', () => {
 
     const closeRow = steps[scan];
     expect(closeRow?.kind).toBe('close');
+  });
+
+  it('decodes a SetProperty<NameProperty> with padding, count, and items', () => {
+    const { body, decoder, totalBytes } = decodeBody(SET_NAME_FIXTURE);
+    expect(body.ItemOtaineSet).toEqual([...EXPECTED_ITEM_OTAINE_SET]);
+    expect(decoder.position).toBe(totalBytes);
   });
 });

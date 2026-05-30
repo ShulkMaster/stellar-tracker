@@ -176,6 +176,18 @@ export class RingBuffer {
     this.pushByte(Opcode.MapEntry);
   }
 
+  public arrayEntry(): void {
+    this.pushByte(Opcode.ArrayEntry);
+  }
+
+  public setCount(): void {
+    this.pushByte(Opcode.SetCount);
+  }
+
+  public textPropertyValue(): void {
+    this.pushByte(Opcode.TextPropertyValue);
+  }
+
   public yieldName(name: string): void {
     this.pushNamedOpcode(Opcode.YieldName, name);
   }

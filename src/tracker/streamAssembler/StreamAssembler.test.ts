@@ -9,6 +9,7 @@ import {
   GENERIC_STRUCT_FIXTURE,
   MAP_NAME_FLOAT_FIXTURE,
   PRIMITIVE_ARRAY_FIXTURE,
+  VECTOR_STRUCT_FIXTURE,
 } from 'tracker/streamDecoder/fixtures';
 import type { DecodeStepRow } from 'types/table';
 import { ENTITY } from 'types/entity';
@@ -136,5 +137,32 @@ describe('StreamAssembler', () => {
     // Arrays carry no ENTITY marker — `Array.isArray` already distinguishes
     // them from struct/map containers.
     expect((arr as unknown as { [ENTITY]?: string })[ENTITY]).toBeUndefined();
+  });
+
+  it('assembles trailing footer hex after body None', () => {
+    const headerBytes = loadHeaderThroughSaveClass();
+    const footer = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x42, 0x7d, 0x5a, 0xce]);
+    const buffer = new Uint8Array(headerBytes.length + VECTOR_STRUCT_FIXTURE.length + footer.length);
+    buffer.set(headerBytes, 0);
+    buffer.set(VECTOR_STRUCT_FIXTURE, headerBytes.length);
+    buffer.set(footer, headerBytes.length + VECTOR_STRUCT_FIXTURE.length);
+
+    const decoder = new StreamDecoder(new BinaryReader(buffer));
+    const assembler = new StreamAssembler(decoder);
+
+    let skipRow: Extract<DecodeStepRow, { kind: 'read' }> | null = null;
+    while (decoder.canStep) {
+      const row = assembler.step()!;
+      if (row.kind === 'read' && row.opcode === 'SkipBytes') {
+        skipRow = row;
+      }
+    }
+
+    const assembled = assembler.header as unknown as Record<string, unknown>;
+    expect(decoder.position).toBe(buffer.length);
+    expect(decoder.canStep).toBe(false);
+    expect(assembled.trailingFooter).toBe('00 00 00 00 42 7D 5A CE');
+    expect(skipRow).not.toBeNull();
+    expect(skipRow!.value).toBe('00 00 00 00 42 7D 5A CE');
   });
 });

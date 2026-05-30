@@ -57,6 +57,27 @@ export class BinaryReader {
     this._offset = offset;
   }
 
+  /** Non-consuming FString peek for tag-boundary heuristics. */
+  public peekFStringAt(
+    offset: number,
+  ): { name: string; nextOffset: number } | null {
+    if (offset + 4 > this.size) {
+      return null;
+    }
+    const length = this._view.getInt32(offset, true);
+    const dataStart = offset + 4;
+    if (length === 0) {
+      return { name: '', nextOffset: dataStart };
+    }
+    if (length < 0 || length > 256 || dataStart + length > this.size) {
+      return null;
+    }
+    const name = this._ascii.decode(
+      this._buffer.subarray(dataStart, dataStart + length - 1),
+    );
+    return { name, nextOffset: dataStart + length };
+  }
+
   public readSlice(start: number, end: number): ArrayBufferLike {
     const length = end - start;
     if (length > 1024) {

@@ -2,7 +2,7 @@
  * Decoder-side frame stack.
  *
  * Frames are needed only for *iterating* multi-entry containers in the body
- * (arrays and maps). Once a frame is on top, the post-step hook
+ * (arrays, sets, and maps). Once a frame is on top, the post-step hook
  * `StreamDecoder.advancePropertyIter` re-enqueues the next element opcode
  * after each completed entry and tears the container down when the count
  * reaches zero.
@@ -11,22 +11,27 @@
  * GVAS-header `customVersions` block via the `CustomVersionEntry`
  * scheduler opcode, ...) is opcode-driven and frame-free.
  *
- * Two variants today:
+ * Three variants today:
  *
- * - `arrayIter`: body `ArrayProperty` whose `ItemType` is a primitive or
- *   FString. Carries the item type plus the remaining count.
+ * - `arrayIter`: body `ArrayProperty`. Carries the item type, remaining
+ *   count, and for struct items the one shared struct descriptor that appears
+ *   before the count-delimited element bodies.
+ * - `setIter`: body `SetProperty`. Same iteration model as primitive arrays.
  * - `mapIter`: body `MapProperty`. Carries key/value types, remaining
  *   count, the property name (for the assembler) and the `_listDepth`
- *   snapshot at frame creation. The snapshot is what lets the `None` gate
- *   in `handleTagName` know when a struct-value entry has ended (the
- *   inner `None` decrements `_listDepth` back to this snapshot).
- *
- * `ArrayProperty<StructProperty>` body items still fall back to
- * `SkipBytes` in `enqueueValueSequence` and so do not push a frame.
- * Struct-keyed maps are out of scope (no occurrence in `SBS00.sav`).
+ *   snapshot at frame creation.
  */
 export type ArrayIterElement = {
   itemType: string;
+  /** Populated for `StructProperty` array elements after their descriptor is read. */
+  structType?: string;
+};
+
+/** Shared `ArrayProperty<StructProperty>` descriptor consumed after ItemCount. */
+export type SharedStructArrayDescriptor = {
+  name: string;
+  structType: string;
+  valueEnd: number;
 };
 
 export type ArrayIterFrame = {
@@ -36,30 +41,36 @@ export type ArrayIterFrame = {
   /** Pinned at frame creation; reserved for future per-element decoration. */
   totalCount: number;
   element: ArrayIterElement;
+  /** `_listDepth` of the element's property list after `openStruct` (0 until set). */
+  elementListDepth: number;
+  entryStartListDepth: number;
+  /** Populated for `ArrayProperty<StructProperty>` after the shared descriptor is read. */
+  sharedStruct?: SharedStructArrayDescriptor;
+};
+
+export type SetIterFrame = {
+  kind: 'setIter';
+  remaining: number;
+  totalCount: number;
+  element: ArrayIterElement;
+  elementListDepth: number;
+  entryStartListDepth: number;
 };
 
 export type MapIterFrame = {
   kind: 'mapIter';
-  /** Entries still to consume. Decremented after each completed entry. */
   remaining: number;
-  /** Pinned at frame creation; reserved for future per-entry decoration. */
   totalCount: number;
-  /** GVAS KeyType FString from the tag metadata. */
   keyType: string;
-  /** GVAS ValueType FString from the tag metadata. */
   valueType: string;
-  /** Property name — for diagnostics; the assembler keys via the `openMap` row. */
   propName: string;
-  /**
-   * Snapshot of `_listDepth` at frame creation. A struct-valued entry
-   * temporarily pushes `_listDepth` up by 1 (its inner property list); the
-   * inner terminating `None` brings it back to this value. `handleTagName`
-   * uses the match to suppress the parent-`TagName` re-enqueue (otherwise
-   * the next entry's key bytes would be misread as a property tag name),
-   * and `advancePropertyIter` uses the match to recognize the entry's
-   * `PropNone` as the end-of-entry boundary.
-   */
   entryStartListDepth: number;
+  /** When `keyType` is `StructProperty`, tracks key vs value decode phase. */
+  entryPhase?: 'key' | 'value';
+  /** Struct type FString from the key InnerTag (struct-keyed maps only). */
+  structKeyType?: string;
+  /** Map key string for the in-flight entry (struct-key phase stores it here). */
+  currentEntryKey?: string;
 };
 
-export type ParseFrame = ArrayIterFrame | MapIterFrame;
+export type ParseFrame = ArrayIterFrame | SetIterFrame | MapIterFrame;
