@@ -710,8 +710,6 @@ export class StreamDecoder {
       this._state.openStruct('body');
       this._listDepth++;
       this._state.tagName();
-    } else if (this._reader.position < this._reader.size) {
-      this.enqueueTrailingFooter();
     }
     return {
       kind: 'control',
