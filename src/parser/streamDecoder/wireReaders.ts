@@ -1,4 +1,4 @@
-import { BinaryReader } from 'tracker/binaryReader/BinaryReader';
+import { BinaryReader } from 'parser/binaryReader/BinaryReader';
 import type { SharedStructArrayDescriptor } from './ParseFrames';
 
 export function readSharedStructArrayDescriptor(

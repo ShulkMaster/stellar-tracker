@@ -1,5 +1,5 @@
 import type { DataRow } from 'types/table';
-import { toHex } from 'tracker/decoder/decoder';
+import { toHex } from 'parser/decoder/decoder';
 
 type View = {
   readonly offset: number;

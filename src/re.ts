@@ -28,7 +28,7 @@ import process from 'node:process';
 
 import type { DataRow, DecodeStepRow } from 'types/table';
 import { safeStringify } from 'lib/safeStringify';
-import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
+import { BinaryReader, StreamDecoder, StreamAssembler } from 'parser';
 
 type Args = {
   file: string;

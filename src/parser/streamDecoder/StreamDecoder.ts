@@ -1,8 +1,8 @@
 import type { DecodeStepRow, DecodeValue, TagHeaderField } from 'types/table';
-import { BinaryReader } from 'tracker/binaryReader/BinaryReader';
-import { toHex } from 'tracker/decoder/decoder';
-import { RingBuffer } from 'tracker/ringBuffer/RingBuffer';
-import { Opcode, OPCODE_NAMES } from 'tracker/ringBuffer/Opcodes';
+import { BinaryReader } from 'parser/binaryReader/BinaryReader';
+import { toHex } from 'parser/decoder/decoder';
+import { RingBuffer } from 'parser/ringBuffer/RingBuffer';
+import { Opcode, OPCODE_NAMES } from 'parser/ringBuffer/Opcodes';
 import type {
   ParseFrame,
   ArrayIterElement,

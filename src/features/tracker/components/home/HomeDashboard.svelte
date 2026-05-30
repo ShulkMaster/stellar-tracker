@@ -1,9 +1,10 @@
 <script lang="ts">
-  import ProgressBar from '../../../../components/ProgressBar.svelte';
+  import ProgressBar from 'components/ProgressBar.svelte';
+  import { CAN_TOTAL } from 'data/cans';
 
-  // TODO: These will come from real computed data later
+  // TODO: These will come from real computed data later (via saveAdapter + live header).
   const progress = {
-    cans: 79,
+    cans: 0,
     outfits: 64,
     exospines: 85,
     fish: 47,
@@ -23,7 +24,7 @@
   </div>
 
   <p style="margin-top: 1rem; color: var(--st-text-subtle); font-size: 0.9rem;">
-    These bars will be driven by real save data in the next phase.
+    Cans total is now sourced from the curated retail list ({CAN_TOTAL}). Other bars and real obtained counts will be driven by save data next.
   </p>
 </div>
 

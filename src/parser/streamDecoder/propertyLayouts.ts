@@ -1,4 +1,4 @@
-import { Opcode } from 'tracker/ringBuffer/Opcodes';
+import { Opcode } from 'parser/ringBuffer/Opcodes';
 
 const PRIMITIVE_ELEMENT_OPCODES: ReadonlySet<Opcode> = new Set([
   Opcode.FixInt32,

@@ -24,3 +24,9 @@ dist-ssr
 *.sln
 *.sw?
 public/*.sav
+
+# Large parsed save dumps (produced by `pnpm re --export`)
+# These contain full player progress and must never be committed.
+save.json
+*.save.json
+dist-re/*.json

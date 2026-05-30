@@ -1,4 +1,4 @@
-import { BinaryWriter } from 'tracker/binaryWriter/BinaryWriter';
+import { BinaryWriter } from 'parser/binaryWriter/BinaryWriter';
 import { EXPECTED_CUSTOM_VERSIONS } from './customVersionsExpected';
 import { HEADER_THROUGH_SAVE_CLASS } from './headerFixture';
 

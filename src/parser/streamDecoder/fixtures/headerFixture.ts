@@ -1,4 +1,4 @@
-import { BinaryWriter } from 'tracker/binaryWriter/BinaryWriter';
+import { BinaryWriter } from 'parser/binaryWriter/BinaryWriter';
 import {
   EXPECTED_CUSTOM_VERSIONS,
   CUSTOM_VERSION_ENTRY_BYTES,
