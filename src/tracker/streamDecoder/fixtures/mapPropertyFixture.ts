@@ -53,6 +53,14 @@ export const EXPECTED_MAP_INT_STRUCT: Readonly<
   '7': { HP: 9.25 },
 };
 
+export type ExpectedVectorBufferEntry = { x: number; y: number; z: number };
+export const EXPECTED_VECTOR_BUFFER_DATA: Readonly<
+  Record<string, ExpectedVectorBufferEntry>
+> = {
+  ESBBufferDataSlot_Slot1: { x: -0.62014836, y: -0.7844845, z: 0 },
+  ESBBufferDataSlot_Slot2: { x: -0.6795743, y: 0.7336067, z: 0 },
+};
+
 function fstringByteLength(text: string): number {
   if (text.length === 0) return 4;
   return 4 + text.length + 1;
@@ -201,7 +209,34 @@ function buildIntStructMap(): Uint8Array {
   return w.toUint8Array();
 }
 
+/**
+ * F5 — `VectorBufferData : Map<ByteProperty, StructProperty>` with raw Vector
+ * values. This shape appears in `SBS00.sav` around `0x20b97e`: the map value
+ * type is `StructProperty`, but each value is a fixed 3-float Vector payload,
+ * not a nested property list.
+ */
+function buildVectorBufferDataMap(): Uint8Array {
+  const entries = Object.entries(EXPECTED_VECTOR_BUFFER_DATA);
+  let entryBytes = 0;
+  for (const [k] of entries) entryBytes += fstringByteLength(k) + 12;
+  const valueSize = 4 + 4 + entryBytes;
+
+  const w = new BinaryWriter();
+  appendMapTagHeader(w, 'VectorBufferData', 'ByteProperty', 'StructProperty', valueSize);
+  w.writeInt32(0);
+  w.writeInt32(entries.length);
+  for (const [k, v] of entries) {
+    w.writeString(k);
+    w.writeFloat32(v.x);
+    w.writeFloat32(v.y);
+    w.writeFloat32(v.z);
+  }
+  w.writeString('None');
+  return w.toUint8Array();
+}
+
 export const MAP_NAME_FLOAT_FIXTURE = buildNameFloatMap();
 export const MAP_NAME_STRUCT_FIXTURE = buildNameStructMap();
 export const MAP_INT_INT_EMPTY_FIXTURE = buildEmptyIntIntMap();
 export const MAP_INT_STRUCT_FIXTURE = buildIntStructMap();
+export const VECTOR_BUFFER_DATA_MAP_FIXTURE = buildVectorBufferDataMap();

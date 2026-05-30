@@ -23,7 +23,9 @@ export type TagHeaderField =
   | 'valueType'
   | 'itemCount'
   | 'entryCount'
-  | 'mapKey';
+  | 'mapKey'
+  | 'innerName'
+  | 'innerType';
 
 export type DecodeStepRow =
   | {
@@ -48,12 +50,3 @@ export type DecodeStepRow =
   | { kind: 'close'; index?: number }
   | { kind: 'propNone' };
 
-export function isReadStep(row: DecodeStepRow): row is Extract<DecodeStepRow, { kind: 'read' }> {
-  return row.kind === 'read';
-}
-
-export function isTagHeaderStep(
-  row: DecodeStepRow,
-): row is Extract<DecodeStepRow, { kind: 'tagHeader' }> {
-  return row.kind === 'tagHeader';
-}

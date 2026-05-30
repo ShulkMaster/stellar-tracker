@@ -119,6 +119,26 @@ export const enum Opcode {
 
   /** Reads a signed Int8 value from the file (1 byte). */
   FieldInt8 = 35,
+
+  /**
+   * Legacy SetProperty<StructProperty> per-element scheduler. Real
+   * ArrayProperty<StructProperty> values use one shared descriptor after
+   * ItemCount and do not enqueue this per element.
+   */
+  ArrayEntry = 36,
+
+  /**
+   * SetProperty value-prefix — reads 4-byte padding + Int32 ItemCount,
+   * opens the set container, and either short-circuits (empty) or pushes
+   * a `setIter` frame and enqueues the first element opcode.
+   */
+  SetCount = 37,
+
+  /**
+   * TextProperty value: flags byte, optional history type, namespace,
+   * key FString, then source string FString.
+   */
+  TextPropertyValue = 38,
 }
 
 export const OPCODE_NAMES: Record<Opcode, string> = {
@@ -158,4 +178,7 @@ export const OPCODE_NAMES: Record<Opcode, string> = {
   [Opcode.MapCount]: 'MapCount',
   [Opcode.MapEntry]: 'MapEntry',
   [Opcode.FieldInt8]: 'FieldInt8',
+  [Opcode.ArrayEntry]: 'ArrayEntry',
+  [Opcode.SetCount]: 'SetCount',
+  [Opcode.TextPropertyValue]: 'TextPropertyValue',
 };

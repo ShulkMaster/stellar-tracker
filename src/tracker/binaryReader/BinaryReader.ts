@@ -1,8 +1,6 @@
 import type { DataRow } from 'types/table';
 import { toHex } from 'tracker/decoder/decoder';
 
-type ReadStream = ReadableStream<Uint8Array<ArrayBuffer>>;
-
 type View = {
   readonly offset: number;
   readonly length: number;
@@ -12,7 +10,6 @@ export class BinaryReader {
   private readonly _buffer: Uint8Array;
   public readonly _view: DataView;
   private readonly _ascii = new TextDecoder('ascii');
-  private readonly _utf8 = new TextDecoder('utf8');
   private readonly _utf16 = new TextDecoder('utf-16le');
   private readonly _loggingEnabled: boolean;
   private readonly _log: DataRow[] = [];
@@ -22,23 +19,6 @@ export class BinaryReader {
     this._buffer = buffer;
     this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     this._loggingEnabled = loggingEnabled;
-  }
-
-  public static async fromStream(totalSize: number, stream: ReadStream, loggingEnabled: boolean = false): Promise<BinaryReader> {
-    const reader = stream.getReader();
-    const combined = new Uint8Array(totalSize);
-    let offset = 0;
-
-    while (offset < totalSize) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        combined.set(value, offset);
-        offset += value.length;
-      }
-    }
-
-    return new BinaryReader(combined, loggingEnabled);
   }
 
   public get log(): Readonly<DataRow[]> {
@@ -57,16 +37,6 @@ export class BinaryReader {
     this._offset = offset;
   }
 
-  public readSlice(start: number, end: number): ArrayBufferLike {
-    const length = end - start;
-    if (length > 1024) {
-      throw new Error(`Read length exceeded safety limit: ${length} bytes (max 1024)`);
-    }
-    const value = this._view.buffer.slice(start, end);
-    this.addToLog('Slice', value, { offset: start, length });
-    return value;
-  }
-
   public readByte(): number {
     const start = this._offset;
     const value = this._view.getUint8(this._offset);
@@ -83,17 +53,6 @@ export class BinaryReader {
     const value = this._ascii.decode(this._buffer.subarray(this._offset, this._offset + bytes));
     this._offset += bytes;
     this.addToLog('ASCII', value, { offset: start, length: bytes });
-    return value;
-  }
-
-  public readUTF8(bytes: number): string {
-    if (bytes > 1024) {
-      throw new Error(`Read length exceeded safety limit: ${bytes} bytes (max 1024)`);
-    }
-    const start = this._offset;
-    const value = this._utf8.decode(this._buffer.subarray(this._offset, this._offset + bytes));
-    this._offset += bytes;
-    this.addToLog('UTF8', value, { offset: start, length: bytes });
     return value;
   }
 

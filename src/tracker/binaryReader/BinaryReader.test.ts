@@ -29,13 +29,6 @@ describe('BinaryReader', () => {
     expect(reader.position).toBe(5);
   });
 
-  it('should read UTF-8 string', () => {
-    const buffer = new Uint8Array([0xe2, 0x9c, 0x93]); // Check mark
-    const reader = new BinaryReader(buffer);
-    expect(reader.readUTF8(3)).toBe('✓');
-    expect(reader.position).toBe(3);
-  });
-
   it('should report correct size and position', () => {
     const buffer = new Uint8Array(10);
     const reader = new BinaryReader(buffer);
@@ -43,24 +36,6 @@ describe('BinaryReader', () => {
     expect(reader.position).toBe(0);
     reader.readASCII(5);
     expect(reader.position).toBe(5);
-  });
-
-  it('should create from stream', async () => {
-    const buffer = new Uint8Array([0x01, 0x02, 0x03, 0x04]);
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(buffer.slice(0, 2));
-        controller.enqueue(buffer.slice(2, 4));
-        controller.close();
-      },
-    });
-
-    const reader = await BinaryReader.fromStream(
-      4,
-      stream as ReadableStream<Uint8Array<ArrayBuffer>>,
-    );
-    expect(reader.size).toBe(4);
-    expect(reader.readInt32()).toBe(0x04030201);
   });
 
   it('should log operations when enabled', () => {

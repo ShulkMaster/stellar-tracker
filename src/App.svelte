@@ -5,6 +5,7 @@
   import JsonViewer from './components/JsonViewer.svelte';
   import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
   import type { DecodeStepRow } from './types/table';
+  import { safeStringify } from './lib/safeStringify';
 
   let decoder = $state<StreamDecoder | null>(null);
   let assembler = $state<StreamAssembler | null>(null);
@@ -25,22 +26,6 @@
   const SKIP_STEP_LIMIT = 200_000;
 
   let stepCount = $derived(tableRows.length);
-
-  function safeStringify(obj: unknown): string {
-    return JSON.stringify(
-      obj,
-      (_key, value) => {
-        if (typeof value === 'bigint') return value.toString();
-        if (value instanceof Uint8Array) {
-          return Array.from(value)
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join(' ');
-        }
-        return value;
-      },
-      2,
-    );
-  }
 
   function refreshJson() {
     if (!assembler) {
