@@ -3,7 +3,7 @@
   import DataTable from './components/DataTable.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
   import JsonViewer from './components/JsonViewer.svelte';
-  import { BinaryReader, StreamDecoder, StreamAssembler } from 'tracker';
+  import { BinaryReader, StreamDecoder, StreamAssembler } from 'src/parser';
   import type { DecodeStepRow } from './types/table';
   import { safeStringify } from './lib/safeStringify';
 
